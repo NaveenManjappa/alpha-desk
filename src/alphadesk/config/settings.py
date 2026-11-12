@@ -44,6 +44,24 @@ class Settings(BaseSettings):
     azure_openai_deployment_small: str | None = None
     azure_openai_deployment_large: str | None = None
 
+    # --- Tracing (ADR 008) ---
+    # Off by default, so tests and fresh clones never send traces by accident.
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "alphadesk-dev"
+    # Only needed outside LangSmith's US region, e.g. https://eu.api.smith.langchain.com
+    langsmith_endpoint: str | None = None
+
+    @model_validator(mode="after")
+    def _require_tracing_settings(self) -> Self:
+        """Tracing without a key would fail quietly in a background thread, so fail loudly here."""
+        if self.langsmith_tracing and not self.langsmith_api_key:
+            raise ValueError(
+                "ALPHADESK_LANGSMITH_TRACING is true but ALPHADESK_LANGSMITH_API_KEY is missing. "
+                "Set the key, or turn tracing off."
+            )
+        return self
+
     @model_validator(mode="after")
     def _require_provider_settings(self) -> Self:
         """Fail at startup, naming every missing setting, rather than on the first model call."""

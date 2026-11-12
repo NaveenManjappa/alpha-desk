@@ -63,3 +63,22 @@ def test_missing_azure_settings_are_all_named(monkeypatch: pytest.MonkeyPatch) -
     assert "ALPHADESK_AZURE_OPENAI_API_KEY" in message
     assert "ALPHADESK_AZURE_OPENAI_DEPLOYMENT_SMALL" in message
     assert "ALPHADESK_AZURE_OPENAI_ENDPOINT" not in message
+
+
+@pytest.mark.unit
+def test_tracing_is_off_by_default_with_the_dev_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.langsmith_tracing is False
+    assert settings.langsmith_project == "alphadesk-dev"
+
+
+@pytest.mark.unit
+def test_tracing_on_without_a_key_names_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_LANGSMITH_TRACING", "true")
+
+    with pytest.raises(ValidationError, match="ALPHADESK_LANGSMITH_API_KEY"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
