@@ -1,6 +1,8 @@
 # ADR 004: Azure OpenAI with two model tiers
 
-Status: Accepted · 10 Nov 2026
+Status: Superseded by [ADR 014](014-openai-default-provider.md) · 12 Nov 2026 (accepted 10 Nov 2026)
+
+The two-tier decision below still stands. The provider choice was replaced.
 
 ## Context
 

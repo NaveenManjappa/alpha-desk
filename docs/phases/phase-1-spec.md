@@ -36,7 +36,7 @@ If Claude Code starts building any of these, stop it.
 You need:
 
 - Docker Desktop, `uv`, and Git installed.
-- An Azure OpenAI resource with one chat model deployed. One deployment is enough for this phase.
+- An OpenAI API key with some credit. One model is enough for this phase.
 - A LangSmith account and API key (free plan).
 - A Finnhub API key (free plan). Check its current limits and terms on Finnhub's site.
 - A contact email for the SEC EDGAR User-Agent header. SEC asks callers to identify themselves.
@@ -119,24 +119,28 @@ Every tool result includes a `source_url` and an `as_of` time.
 
 **Build**
 
-- Settings for the Azure OpenAI endpoint, key, API version and deployment name.
-- A `get_chat_model(tier)` factory. Tiers are `small` and `large`. Both may point at the same deployment for now.
+- A provider setting with two allowed values: `openai` (the default) and `azure_openai`.
+- Settings for the OpenAI API key and the model name for each tier.
+- Azure settings (endpoint, API version, deployment name) that are required only when the provider is `azure_openai`.
+- A `get_chat_model(tier)` factory. Tiers are `small` and `large`. Both may point at the same model for now.
 - A tiny script that sends "Say hello" and prints the reply.
 
 **Done when**
 
-- The script prints a reply from your Azure deployment.
-- A unit test proves the factory picks the right deployment per tier, with no network call.
+- The script prints a reply from OpenAI.
+- A unit test proves the factory picks the right model per tier, with no network call.
+- A unit test proves that setting the provider to `azure_openai` builds an Azure model, with no network call.
 - Starting with a missing key gives a clear error message that names the setting.
 
 **Prompt for Claude Code**
 
-> Build Slice 1 of docs/phases/phase-1-spec.md. Check the current LangChain docs for how to initialise an Azure OpenAI chat model before writing code. Keep the factory small.
+> Build Slice 1 of docs/phases/phase-1-spec.md and read docs/adr/014-openai-default-provider.md first. Check the current LangChain docs for how to initialise OpenAI and Azure OpenAI chat models before writing code. Keep the factory small.
 
 **Explain back**
 
 - Why not create the model directly inside the agent?
-- What are the two tiers for, and which later ADR do they serve?
+- What are the two tiers for?
+- What would you change to run on Azure OpenAI instead?
 
 ---
 
