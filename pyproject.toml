@@ -1,0 +1,50 @@
+[project]
+name = "alphadesk"
+version = "0.1.0"
+description = "An AI investment research desk for US-listed companies, with a paper-trading portfolio."
+readme = "README.md"
+authors = [
+    { name = "Naveen Manjappa", email = "122058418+NaveenManjappa@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic-settings>=2.16.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# importlib mode lets tests/ mirror src/ without __init__.py files or name clashes.
+# Evals call a real LLM, so they are excluded by default and run only via `make eval`.
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--strict-markers --import-mode=importlib -m 'not eval'"
+markers = [
+    "unit: fast tests with no network, database or LLM calls",
+    "integration: tests that cross a real boundary (API, database, external service)",
+    "eval: evals that call a real LLM; run with `make eval`",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "ruff>=0.17.4",
+]
