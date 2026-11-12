@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "langchain-openai>=1.7.4",
     "pydantic-settings>=2.16.2",
 ]
 
@@ -23,7 +24,7 @@ target-version = "py313"
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 venvPath = "."

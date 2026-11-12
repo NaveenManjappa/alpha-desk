@@ -121,7 +121,7 @@ Every tool result includes a `source_url` and an `as_of` time.
 
 - A provider setting with two allowed values: `openai` (the default) and `azure_openai`.
 - Settings for the OpenAI API key and the model name for each tier.
-- Azure settings (endpoint, API version, deployment name) that are required only when the provider is `azure_openai`.
+- Azure settings (endpoint, API key, one deployment name per tier) that are required only when the provider is `azure_openai`. Azure is called through its v1 API, which needs no API version (ADR 014).
 - A `get_chat_model(tier)` factory. Tiers are `small` and `large`. Both may point at the same model for now.
 - A tiny script that sends "Say hello" and prints the reply.
 
