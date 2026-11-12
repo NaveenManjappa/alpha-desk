@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # Only needed outside LangSmith's US region, e.g. https://eu.api.smith.langchain.com
     langsmith_endpoint: str | None = None
 
+    # --- Market data: Finnhub (ADR 007) ---
+    # Optional at startup: only the quote tool needs it, and it reports a missing key itself.
+    finnhub_api_key: SecretStr | None = None
+    finnhub_base_url: str = "https://finnhub.io/api/v1"
+    finnhub_timeout_seconds: float = 10.0
+
     @model_validator(mode="after")
     def _require_tracing_settings(self) -> Self:
         """Tracing without a key would fail quietly in a background thread, so fail loudly here."""

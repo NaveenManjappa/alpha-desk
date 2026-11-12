@@ -1,1 +1,1 @@
-"""Clients for outside APIs: the LLM provider, and later Finnhub and SEC EDGAR."""
+"""Clients for outside APIs: the LLM provider, Finnhub, and later SEC EDGAR."""

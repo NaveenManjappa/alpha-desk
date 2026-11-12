@@ -7,6 +7,8 @@ name = "alphadesk"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
+    { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "pydantic-settings" },
 ]
@@ -21,6 +23,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "langchain-core", specifier = ">=1.8.0" },
     { name = "langchain-openai", specifier = ">=1.7.4" },
     { name = "pydantic-settings", specifier = ">=2.16.2" },
 ]

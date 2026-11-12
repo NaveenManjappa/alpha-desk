@@ -24,7 +24,7 @@ Use Finnhub's free tier, behind the `market-data` MCP server.
 - Ratios such as P/E are calculated in code from the price plus figures from SEC EDGAR. We do not depend on a provider's premium fundamentals.
 - Every quote carries its timestamp, and the brief shows it.
 - Results are cached (ADR 011) to stay well inside rate limits.
-- The provider is hidden behind the MCP server. Swapping it touches one service.
+- The provider is hidden behind the MCP server. Swapping it touches one client in `integrations/`. The client translates the provider's responses and failures into provider-neutral domain types (`MarketQuote`, `MarketDataError`), so services never see provider types.
 - Free tiers and their terms change. Confirm Finnhub's current limits and usage terms on its own site before building Phase 2.
 
 ## In short
