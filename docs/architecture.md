@@ -39,7 +39,7 @@ flowchart LR
     Graph -->|MCP| BR[Paper broker server]
     MD --> Ext1[(Finnhub: prices, news)]
     FL --> Ext2[(SEC EDGAR: company filings)]
-    Graph --> LLM[(Azure OpenAI)]
+    Graph --> LLM[(OpenAI API)]
     Graph -.traces.-> LS[(LangSmith)]
 ```
 
@@ -77,7 +77,7 @@ Rules that hold across agents:
 
 - **Numbers come from tools, not the LLM.** Ratios, exposure and totals are calculated in code.
 - **No agent can write.** Every agent has read-only tools. The Portfolio Manager only proposes an order. After human approval, a plain code node places it (ADR 009).
-- **Two model tiers.** A small, cheap model for routing and extraction. A large model for analysis and critique.
+- **Two model tiers.** A small, cheap model for routing and extraction. A large model for analysis and critique. The provider is OpenAI by default and is set by configuration (ADR 014).
 
 ## 6. How a request flows
 
@@ -348,7 +348,7 @@ Phases 1 to 5 are the core. Phase 6 adds depth. Phase 7 is optional: the app is 
 | 001 | Orchestration framework | LangGraph |
 | 002 | Supervisor pattern versus peer-to-peer swarm | Supervisor, with one handoff |
 | 003 | Plain function tools versus MCP | Functions first, MCP from Phase 2 |
-| 004 | LLM provider and model tiers | Azure OpenAI, two tiers |
+| 004 | LLM provider and model tiers | Superseded by 014. Two tiers kept. |
 | 005 | Postgres for state, memory and business data | One database |
 | 006 | Vector store | Qdrant |
 | 007 | Market data provider | Finnhub free tier, behind the MCP server |
@@ -358,6 +358,7 @@ Phases 1 to 5 are the core. Phase 6 adds depth. Phase 7 is optional: the app is 
 | 011 | Cache store and invalidation | Redis, time-based plus data-date keys |
 | 012 | Guardrail tooling | NeMo Guardrails for input, code for tool and output layers |
 | 013 | Local-first running and cloud hosting | Docker Compose first. Optional deploy on Neon, Qdrant Cloud and Upstash, with a Qdrant keep-alive job. |
+| 014 | Default LLM provider | OpenAI by default. Provider set by config, Azure OpenAI supported. |
 
 ## 19. Verified against current docs
 

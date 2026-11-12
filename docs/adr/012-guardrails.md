@@ -25,7 +25,7 @@ The app reads untrusted text (user messages, news, filings) and can change state
 ## Consequences
 
 - Rule checks are in from the start, because they are part of correctness. NeMo input rails arrive in Phase 6.
-- Azure OpenAI's own content filter remains on underneath, as a base layer.
+- A provider-level content check sits underneath as a base layer. On OpenAI that is a call to its moderation endpoint. On Azure OpenAI it is the built-in content filter.
 - Text from news and filings is always treated as data, never as instructions. A safety eval plants an instruction inside a news article and checks it is ignored.
 - Input rails add a model call per message. We measure that latency and keep the rail set small.
 

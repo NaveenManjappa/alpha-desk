@@ -5,7 +5,7 @@ These add to `CodingStandards.md`. They are specific to this project.
 ## Stack
 
 - FastAPI for the API. LangGraph and LangChain for agents. Pydantic for all data contracts.
-- Azure OpenAI for models. LangSmith for tracing. DeepEval for evals.
+- OpenAI for models by default. The provider is a setting, and Azure OpenAI is the other supported value. LangSmith for tracing. DeepEval for evals.
 - Postgres, Qdrant and Redis run through Docker Compose.
 - Check the current LangChain and LangGraph docs before using an API. These libraries change often. Do not rely on older patterns from memory.
 

@@ -16,7 +16,7 @@ Ask about a company and get a short, typed answer where every number has a sourc
 - `make`
 - Git
 
-Later slices also need Docker Desktop, an Azure OpenAI deployment, a LangSmith key and a Finnhub key. The Phase 1 spec lists them.
+Later slices also need Docker Desktop, an OpenAI API key, a LangSmith key and a Finnhub key. The Phase 1 spec lists them.
 
 ## Getting started
 
