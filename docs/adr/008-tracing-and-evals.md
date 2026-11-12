@@ -37,6 +37,6 @@ We need to see what each run did, and to measure whether the system is good. The
 - Judged metrics get thresholds with some slack, to absorb run-to-run variation.
 - Eval runs cost tokens. The CI dataset stays small. A larger set runs on demand.
 
-## In an interview
+## In short
 
 "Tracing tells me what happened. Evals tell me whether it was good. For finance I don't trust judged scores alone, so anything with a right answer is checked in code."

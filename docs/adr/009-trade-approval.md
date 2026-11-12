@@ -1,6 +1,6 @@
 # ADR 009: Approval as a custom graph node, order placed by code
 
-Status: Proposed · 10 Nov 2026
+Status: Accepted · 10 Nov 2026
 
 ## Context
 
@@ -13,7 +13,7 @@ Placing an order changes state. A human must approve it first. There are two way
 | Approval middleware on the `place_order` tool | Very little code. Built into LangChain. | The LLM still makes the write call. The approval record is generic, not a business object. |
 | A custom approval node in the graph | The order proposal is a typed object we store, show and audit. Code places the order, not the LLM. Shows the underlying pause-and-resume mechanism. | More code to write and test. |
 
-## Decision (proposed)
+## Decision
 
 Use a custom approval node.
 
@@ -32,6 +32,6 @@ The important point: **the LLM never calls a write tool.** It proposes. Code and
 - When a paused node resumes, it runs again from its start. So nothing with a side effect sits before the pause in the same node.
 - We write more code than the middleware route. The middleware is still worth a short experiment in Phase 5, to compare.
 
-## In an interview
+## In short
 
 "The model can only propose a trade. A human approves it and plain code executes it. I kept the write path deterministic because that is the one place a mistake costs money."

@@ -32,6 +32,6 @@ The key must be the same on every attempt. If it were generated at call time, a 
 - After a crash, the graph resumes and calls again with the same key. The broker returns the existing order.
 - A test proves it: call `place_order` twice with one key, expect one order.
 
-## In an interview
+## In short
 
 "At-least-once delivery plus an idempotent receiver gives exactly-once effect. The key belongs to the intent, the proposal, not to the attempt."

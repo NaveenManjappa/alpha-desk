@@ -25,6 +25,6 @@ Use one Postgres database, with a separate schema for each concern: `checkpoints
 - Checkpoints grow with every step. Old threads need a clean-up job to stay inside free storage.
 - Business tables are accessed through repositories, so agents never write SQL.
 
-## In an interview
+## In short
 
 "Checkpointer and store are different things. The checkpointer is per-thread short-term state. The store is cross-thread long-term memory. Both sit in Postgres, next to the business data, because one database is the simplest thing that works at this scale."

@@ -25,6 +25,6 @@ Phase 1 uses plain functions. Phase 2 moves them behind three MCP servers: `mark
 - LangChain's MCP client (`langchain.mcp`) is in beta, so its API may change. All MCP client code sits in one module, `tools/`, to contain that risk.
 - Tool logic lives in `services/`. The MCP server is a thin wrapper, so the logic is testable without MCP.
 
-## In an interview
+## In short
 
 "MCP is worth it when tools are shared, owned separately, or need their own access rules. For a small single app, plain functions are simpler. I built both so I could show where the line is."

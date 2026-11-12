@@ -43,6 +43,6 @@ Portfolio state, order status, and anything personal to one user in a shared key
 - The semantic cache is the riskiest. It ships last, behind a flag, with an eval that checks it never returns an answer for the wrong company.
 - Upstash's free plan has a monthly command limit. Normal demo use sits far below it.
 
-## In an interview
+## In short
 
 "I cache at three levels and put the data version in the key, so invalidation is automatic. I never cache anything where stale means wrong, like a portfolio balance."

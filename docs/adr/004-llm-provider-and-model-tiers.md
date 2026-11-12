@@ -32,6 +32,6 @@ Model names live in configuration, not code. A second deployment acts as a fallb
 - Changing a model is a behaviour change. The eval suite must pass before a model swap is accepted.
 - Stable system prompts are placed first in each request so the provider's prompt cache can reuse them.
 
-## In an interview
+## In short
 
 "I matched model strength to task difficulty and measured cost per agent. Model names are config, and evals gate any model change."

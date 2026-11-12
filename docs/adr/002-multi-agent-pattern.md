@@ -28,6 +28,6 @@ Research and trading are different modes. Research is read-only and open-ended. 
 - More agents means more tokens. The router sends simple questions to one analyst only.
 - The handoff passes a short typed summary, not the whole message history.
 
-## In an interview
+## In short
 
 "I started with one agent and only split when I had a reason: parallel research, smaller tool sets, and keeping write access away from research. Multi-agent costs more, so simple questions still take the short path."

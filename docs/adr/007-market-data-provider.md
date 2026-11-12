@@ -27,6 +27,6 @@ Use Finnhub's free tier, behind the `market-data` MCP server.
 - The provider is hidden behind the MCP server. Swapping it touches one service.
 - Free tiers and their terms change. Confirm Finnhub's current limits and usage terms on its own site before building Phase 2.
 
-## In an interview
+## In short
 
 "For paper trading, delayed quotes are fine, so I optimised for cost and rate limits. I show the data's age to the user and keep the provider swappable."

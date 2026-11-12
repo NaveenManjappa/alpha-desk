@@ -4,7 +4,7 @@ Status: Accepted · 10 Nov 2026
 
 ## Context
 
-This is a portfolio project. Running cost should be zero, apart from LLM calls. It must still be easy for someone else to run and for the owner to demo.
+This is a personal project. Running cost should be zero, apart from LLM calls. It must still be easy for someone else to run and for the owner to demo.
 
 ## Options considered
 
@@ -37,6 +37,6 @@ This is a portfolio project. Running cost should be zero, apart from LLM calls. 
 - A budget alert in Azure guards against surprise spend.
 - The README includes a recorded demo, so the project can be judged without running it.
 
-## In an interview
+## In short
 
 "It runs anywhere with one command, and the cloud version costs nothing when idle because everything scales to zero. I designed for the constraint I actually had, which was cost."

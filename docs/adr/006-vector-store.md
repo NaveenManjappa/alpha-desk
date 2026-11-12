@@ -25,6 +25,6 @@ Use Qdrant. Locally it runs as a container. The optional deploy uses the Qdrant 
 - The free cluster pauses after seven idle days. A scheduled keep-alive request prevents that (see ADR 013).
 - Vector access sits behind a small interface, so pgvector remains a fallback.
 
-## In an interview
+## In short
 
 "I picked a dedicated vector store for filtering and hybrid search, and kept it behind an interface. pgvector would be my choice if I wanted one less service."

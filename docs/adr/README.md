@@ -12,10 +12,10 @@ Each ADR records one decision: the problem, the options, the choice, and what it
 | [006](006-vector-store.md) | Qdrant as the vector store | Accepted |
 | [007](007-market-data-provider.md) | Finnhub free tier for market data and news | Accepted |
 | [008](008-tracing-and-evals.md) | LangSmith for tracing, DeepEval plus code checks for evals | Accepted |
-| [009](009-trade-approval.md) | Approval as a custom graph node, order placed by code | Proposed |
+| [009](009-trade-approval.md) | Approval as a custom graph node, order placed by code | Accepted |
 | [010](010-idempotency.md) | Idempotency key created with the proposal, enforced by the broker | Accepted |
 | [011](011-caching.md) | Redis with three cache types and data-aware keys | Accepted |
 | [012](012-guardrails.md) | NeMo Guardrails for input, code for tool and output rules | Accepted |
 | [013](013-running-and-hosting.md) | Local-first with Docker Compose, optional free-tier deploy | Accepted |
 
-Template for new ADRs: Context, Options considered, Decision, Consequences, In an interview.
+Template for new ADRs: Context, Options considered, Decision, Consequences, In short.

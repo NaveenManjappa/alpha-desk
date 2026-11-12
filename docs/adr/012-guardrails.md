@@ -29,6 +29,6 @@ The app reads untrusted text (user messages, news, filings) and can change state
 - Text from news and filings is always treated as data, never as instructions. A safety eval plants an instruction inside a news article and checks it is ignored.
 - Input rails add a model call per message. We measure that latency and keep the rail set small.
 
-## In an interview
+## In short
 
 "I used a framework where the problem is generic and code where the rule is specific to my domain. 'No order above the cash balance' is an if statement, not a model's opinion."

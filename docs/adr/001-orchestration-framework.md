@@ -26,6 +26,6 @@ Use LangGraph for the graph and LangChain's `create_agent` for individual agents
 - We depend on a fast-moving library. Versions are pinned, and upgrades are deliberate.
 - Framework imports stay out of `domain/` and `services/`, so business logic survives a framework change.
 
-## In an interview
+## In short
 
 "I chose a graph framework because my hardest requirements were control-flow ones: parallel work, a bounded review loop, and a pause for human approval. I wanted those to be explicit, not buried in prompts."

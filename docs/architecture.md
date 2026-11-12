@@ -154,7 +154,7 @@ The cost: an extra network hop and more services to run. For a small app, plain 
 | Episodic memory | Past briefs and trade decisions, with the reasons | LangGraph store on Postgres | One user, all threads | 4 |
 | Procedural memory | Learned instructions, such as "always show P/E first" | LangGraph store on Postgres | One user, all threads | 4 |
 
-The key distinction to explain in interviews:
+The key distinction:
 
 - **Checkpointer = short-term.** It saves the graph's state after every step, per thread. It gives conversation continuity, pause and resume, replay, and crash recovery.
 - **Store = long-term.** It holds facts that outlive a thread, keyed by user.
@@ -265,8 +265,10 @@ alpha-desk/
   CodingStandards.md
   docker-compose.yml
   Makefile
+  CLAUDE.md
   docs/
     architecture.md
+    project-rules.md
     adr/
     phases/
   src/alphadesk/
@@ -279,6 +281,7 @@ alpha-desk/
     guardrails/
     domain/         # Pydantic models: Brief, OrderProposal, ...
     services/       # portfolio maths, risk calculations
+    integrations/   # clients for outside APIs: Finnhub, SEC EDGAR
     config/
   mcp_servers/
     market_data/
