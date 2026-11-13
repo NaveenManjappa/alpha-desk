@@ -1,5 +1,5 @@
 """Tests for the research agent loop. No real LLM and no network: a scripted fake model
-plays the LLM, and the real tool, service and client sit on an in-memory httpx transport."""
+plays the LLM, and the real tools, services and clients sit on in-memory httpx transports."""
 
 from collections.abc import Iterator, Sequence
 from typing import Any
@@ -12,6 +12,9 @@ from pydantic import Field
 
 from alphadesk.agents.research_agent import create_research_agent, load_system_prompt
 from alphadesk.integrations.finnhub import FinnhubClient
+from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter
+from alphadesk.services.filings import FilingsService
+from alphadesk.services.financials import FinancialFactsService
 from alphadesk.services.quotes import QuoteService
 
 
@@ -23,8 +26,10 @@ class ScriptedChatModel(GenericFakeChatModel):
     """
 
     calls: list[list[BaseMessage]] = Field(default_factory=list)
+    tool_names: list[str] = Field(default_factory=list)
 
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> "ScriptedChatModel":
+        self.tool_names = [tool.name for tool in tools]
         return self
 
     def _generate(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Any:
@@ -46,6 +51,18 @@ def _quote_service() -> QuoteService:
     return QuoteService(FinnhubClient(http))
 
 
+def _agent(model: ScriptedChatModel) -> Any:
+    """The agent with all three tools. EDGAR is never reached in these tests: it answers 503."""
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
+    edgar = EdgarClient(http, RateLimiter(max_per_second=1000))
+    return create_research_agent(
+        model,
+        quote_service=_quote_service(),
+        financial_facts_service=FinancialFactsService(edgar),
+        filings_service=FilingsService(edgar),
+    )
+
+
 def _ask(question: str) -> dict[str, Any]:
     return {"messages": [HumanMessage(question)]}
 
@@ -61,6 +78,8 @@ def test_system_prompt_comes_from_the_prompts_folder() -> None:
     prompt = load_system_prompt()
 
     assert "get_quote" in prompt
+    assert "get_financial_facts" in prompt
+    assert "list_recent_filings" in prompt
     assert "not financial advice" in prompt
 
 
@@ -68,7 +87,7 @@ def test_system_prompt_comes_from_the_prompts_folder() -> None:
 @pytest.mark.asyncio
 async def test_price_question_runs_model_then_tool_then_model() -> None:
     model = _model(ASK_FOR_QUOTE, AIMessage("Apple trades at $227.50."))
-    agent = create_research_agent(model, _quote_service())
+    agent = _agent(model)
 
     result = await agent.ainvoke(_ask("What is Apple's share price?"))
 
@@ -85,7 +104,7 @@ async def test_price_question_runs_model_then_tool_then_model() -> None:
 @pytest.mark.asyncio
 async def test_model_receives_the_system_prompt_first() -> None:
     model = _model(AIMessage("4"))
-    agent = create_research_agent(model, _quote_service())
+    agent = _agent(model)
 
     await agent.ainvoke(_ask("What is 2 plus 2?"))
 
@@ -98,9 +117,19 @@ async def test_model_receives_the_system_prompt_first() -> None:
 @pytest.mark.asyncio
 async def test_reply_without_tool_calls_ends_the_loop_after_one_model_call() -> None:
     model = _model(AIMessage("4"))
-    agent = create_research_agent(model, _quote_service())
+    agent = _agent(model)
 
     result = await agent.ainvoke(_ask("What is 2 plus 2?"))
 
     assert [type(m) for m in result["messages"]] == [HumanMessage, AIMessage]
     assert len(model.calls) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_model_is_offered_all_three_tools() -> None:
+    model = _model(AIMessage("4"))
+
+    await _agent(model).ainvoke(_ask("What is 2 plus 2?"))
+
+    assert sorted(model.tool_names) == ["get_financial_facts", "get_quote", "list_recent_filings"]

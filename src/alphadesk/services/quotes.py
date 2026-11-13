@@ -7,17 +7,14 @@ only calls this, so all of it is testable without LangChain.
 """
 
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Protocol
 
 from alphadesk.domain.market_data import MarketDataError, MarketQuote
 from alphadesk.domain.tool_results import QuoteResult, ToolError
+from alphadesk.services.tickers import invalid_ticker_error, normalise_ticker
 
 logger = logging.getLogger(__name__)
-
-# US tickers: a letter, then up to nine letters, digits, dots or dashes (e.g. "BRK.B").
-_TICKER_PATTERN = re.compile(r"[A-Z][A-Z0-9.\-]{0,9}")
 
 
 class QuoteSource(Protocol):
@@ -52,13 +49,9 @@ class QuoteService:
         Args:
             ticker: A US ticker symbol. Case and surrounding spaces are ignored.
         """
-        symbol = ticker.strip().upper()
-        if not _TICKER_PATTERN.fullmatch(symbol):
-            return ToolError(
-                error_type="invalid_input",
-                message=f"'{ticker}' is not a valid ticker. Use a symbol such as 'AAPL'.",
-                as_of=datetime.now(UTC),
-            )
+        symbol = normalise_ticker(ticker)
+        if symbol is None:
+            return invalid_ticker_error(ticker)
 
         source_url = self._source.quote_url(symbol)
         try:

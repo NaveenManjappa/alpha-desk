@@ -5,7 +5,7 @@
     model --(reply has tool calls)--> tools --> model --(no tool calls)--> end
 
 This module decides what goes into that loop: which prompt and which tools. It does not
-choose the model or create the tool's dependencies; the caller passes them in.
+choose the model or create the tools' dependencies; the caller passes them in.
 """
 
 from importlib.resources import files
@@ -14,7 +14,11 @@ from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
+from alphadesk.services.filings import FilingsService
+from alphadesk.services.financials import FinancialFactsService
 from alphadesk.services.quotes import QuoteService
+from alphadesk.tools.filings_tool import make_list_recent_filings_tool
+from alphadesk.tools.financial_facts_tool import make_get_financial_facts_tool
 from alphadesk.tools.quote_tool import make_get_quote_tool
 
 _PROMPT_FILE = "research_agent.md"
@@ -29,12 +33,21 @@ def load_system_prompt() -> str:
     return files("alphadesk").joinpath("prompts", _PROMPT_FILE).read_text(encoding="utf-8")
 
 
-def create_research_agent(model: BaseChatModel, quote_service: QuoteService) -> CompiledStateGraph:
+def create_research_agent(
+    model: BaseChatModel,
+    quote_service: QuoteService,
+    financial_facts_service: FinancialFactsService,
+    filings_service: FilingsService,
+) -> CompiledStateGraph:
     """Build the research agent.
+
+    Each service backs one tool and is passed in so tests can use a fake client.
 
     Args:
         model: The chat model, from `get_chat_model`. Passed in so tests can use a fake.
-        quote_service: Backs the `get_quote` tool. Passed in so tests can use a fake client.
+        quote_service: Backs `get_quote` (Finnhub).
+        financial_facts_service: Backs `get_financial_facts` (SEC EDGAR).
+        filings_service: Backs `list_recent_filings` (SEC EDGAR).
 
     Returns:
         A compiled graph. Run it with
@@ -44,7 +57,11 @@ def create_research_agent(model: BaseChatModel, quote_service: QuoteService) -> 
     """
     return create_agent(
         model=model,
-        tools=[make_get_quote_tool(quote_service)],
+        tools=[
+            make_get_quote_tool(quote_service),
+            make_get_financial_facts_tool(financial_facts_service),
+            make_list_recent_filings_tool(filings_service),
+        ],
         system_prompt=load_system_prompt(),
         name="research_agent",
     )

@@ -1,8 +1,9 @@
-"""Smoke test for Slice 4: ask the research agent one question and log each step.
+"""Smoke test: ask the research agent one question and log each step.
 
 Run with: uv run python scripts/ask.py "What is Apple's share price?"
-Makes real, paid model calls and may call Finnhub. Needs ALPHADESK_OPENAI_API_KEY and
-ALPHADESK_FINNHUB_API_KEY. With ALPHADESK_LANGSMITH_TRACING=true it also produces a trace.
+Makes real, paid model calls and may call Finnhub and SEC EDGAR. Needs
+ALPHADESK_OPENAI_API_KEY, ALPHADESK_FINNHUB_API_KEY and ALPHADESK_SEC_EDGAR_USER_AGENT.
+With ALPHADESK_LANGSMITH_TRACING=true it also produces a trace.
 """
 
 import asyncio
@@ -16,7 +17,10 @@ from alphadesk.agents.research_agent import create_research_agent
 from alphadesk.config.settings import get_settings
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
 from alphadesk.integrations.llm import get_chat_model
+from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter, create_edgar_http_client
 from alphadesk.integrations.tracing import configure_tracing
+from alphadesk.services.filings import FilingsService
+from alphadesk.services.financials import FinancialFactsService
 from alphadesk.services.quotes import QuoteService
 
 logger = logging.getLogger(__name__)
@@ -40,10 +44,17 @@ async def main(question: str) -> None:
     logging.basicConfig(level=settings.log_level, format="%(message)s")
     configure_tracing(settings)  # before the first model call: LangSmith caches its settings
 
-    async with create_finnhub_http_client(settings) as http:
+    async with (
+        create_finnhub_http_client(settings) as finnhub_http,
+        create_edgar_http_client(settings) as edgar_http,
+    ):
+        # One EDGAR client (and so one rate limiter) shared by both EDGAR tools.
+        edgar = EdgarClient(edgar_http, RateLimiter(settings.sec_edgar_max_requests_per_second))
         agent = create_research_agent(
             model=get_chat_model("small", settings),
-            quote_service=QuoteService(FinnhubClient(http)),
+            quote_service=QuoteService(FinnhubClient(finnhub_http)),
+            financial_facts_service=FinancialFactsService(edgar),
+            filings_service=FilingsService(edgar),
         )
         result = await agent.ainvoke({"messages": [{"role": "user", "content": question}]})
 

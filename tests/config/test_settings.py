@@ -82,3 +82,21 @@ def test_tracing_on_without_a_key_names_the_setting(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(ValidationError, match="ALPHADESK_LANGSMITH_API_KEY"):
         Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_sec_user_agent_must_include_a_contact_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_SEC_EDGAR_USER_AGENT", "AlphaDesk")
+
+    with pytest.raises(ValidationError, match="ALPHADESK_SEC_EDGAR_USER_AGENT"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_sec_rate_limit_cannot_exceed_secs_ten_per_second(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_SEC_EDGAR_MAX_REQUESTS_PER_SECOND", "20")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]

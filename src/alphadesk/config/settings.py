@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal, Self
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LlmProvider = Literal["openai", "azure_openai"]
@@ -57,6 +57,26 @@ class Settings(BaseSettings):
     finnhub_api_key: SecretStr | None = None
     finnhub_base_url: str = "https://finnhub.io/api/v1"
     finnhub_timeout_seconds: float = 10.0
+
+    # --- Filings: SEC EDGAR ---
+    # SEC asks every caller to identify itself in the User-Agent header with a name and a
+    # contact email, e.g. "AlphaDesk you@example.com". Optional at startup, like the Finnhub
+    # key: only the EDGAR tools need it.
+    sec_edgar_user_agent: str | None = None
+    sec_edgar_timeout_seconds: float = 10.0
+    # SEC's fair-access limit is 10 requests per second, in total. We stay well under it.
+    sec_edgar_max_requests_per_second: float = Field(default=5.0, gt=0, le=10)
+
+    @field_validator("sec_edgar_user_agent")
+    @classmethod
+    def _user_agent_has_contact_email(cls, value: str | None) -> str | None:
+        """SEC may block callers it cannot contact, so insist on an email in the header."""
+        if value is not None and "@" not in value:
+            raise ValueError(
+                "ALPHADESK_SEC_EDGAR_USER_AGENT must include a contact email, "
+                "e.g. 'AlphaDesk you@example.com'."
+            )
+        return value
 
     @model_validator(mode="after")
     def _require_tracing_settings(self) -> Self:
