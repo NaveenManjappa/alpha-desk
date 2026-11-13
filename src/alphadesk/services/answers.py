@@ -22,8 +22,8 @@ def finalise_answer(
             for example for a question that needs no live data.
 
     Returns:
-        The complete `Answer`, with the fixed disclaimer and `verified` set to False
-        (the grounding check arrives in Slice 7).
+        The complete `Answer`, with the fixed disclaimer and `verified` set to False.
+        Only the grounding check (`apply_grounding`) may set it to True.
     """
     as_of = min(data_fetched_at) if data_fetched_at else answered_at
     return Answer.model_validate(

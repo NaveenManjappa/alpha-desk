@@ -13,7 +13,7 @@ import sys
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tracers.langchain import wait_for_all_tracers
 
-from alphadesk.agents.research_agent import answer_from_agent_state, create_research_agent
+from alphadesk.agents.research_agent import ask_research_agent, create_research_agent
 from alphadesk.config.settings import get_settings
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
 from alphadesk.integrations.llm import get_chat_model
@@ -39,7 +39,7 @@ def _describe(message: BaseMessage) -> str:
 
 
 async def main(question: str) -> None:
-    """Run the agent once, log every message it produced, then print the typed Answer."""
+    """Ask the agent (with its grounding retry), log every message, then print the Answer."""
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(message)s")
     configure_tracing(settings)  # before the first model call: LangSmith caches its settings
@@ -56,18 +56,17 @@ async def main(question: str) -> None:
             financial_facts_service=FinancialFactsService(edgar),
             filings_service=FilingsService(edgar),
         )
-        result = await agent.ainvoke({"messages": [{"role": "user", "content": question}]})
+        run = await ask_research_agent(agent, question)
 
-    for message in result["messages"]:
+    for message in run.messages:
         logger.info("%s", _describe(message))
-    answer = answer_from_agent_state(result)
-    logger.info("\n%r", answer)
-    logger.info("\n%s", answer.model_dump_json(indent=2))
+    logger.info("\n%r", run.answer)
+    logger.info("\n%s", run.answer.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "What is Apple's share price?"))
+        asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else "What is Microsoft's share price?"))
     finally:
         # Traces are sent from a background thread; wait so a short script does not drop them.
         wait_for_all_tracers()

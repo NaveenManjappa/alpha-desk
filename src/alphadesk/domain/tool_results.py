@@ -108,3 +108,7 @@ class RecentFilingsResult(BaseModel):
     filings: list[Filing]
     source_url: str
     as_of: AwareDatetime
+
+
+ToolResult = QuoteResult | FinancialFactsResult | RecentFilingsResult | ToolError
+"""Anything a data tool can return. The grounding check reads these, never raw JSON."""

@@ -15,6 +15,7 @@ from pydantic import Field
 from alphadesk.agents.research_agent import (
     NoAnswerError,
     answer_from_agent_state,
+    ask_research_agent,
     create_research_agent,
     load_system_prompt,
 )
@@ -236,3 +237,60 @@ def test_state_without_a_structured_answer_raises() -> None:
 
     with pytest.raises(NoAnswerError):
         answer_from_agent_state(state)
+
+
+# --- Grounding check and retry (Slice 7) ------------------------------------------------
+
+INVENTED_CHANGE = {**APPLE_PRICE, "label": "Change today", "value": 9.99}
+ANSWER_WITH_INVENTED_CHANGE = _answer_call(
+    call_id="answer-invented",
+    summary="Apple's shares jumped today.",
+    key_figures=[APPLE_PRICE, INVENTED_CHANGE],
+    sources=[APPLE_PRICE["source_url"]],
+)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_grounded_answer_is_verified_without_a_retry() -> None:
+    model = _model(ASK_FOR_QUOTE, APPLE_ANSWER)
+
+    run = await ask_research_agent(_agent(model), "What is Apple's share price?")
+
+    assert run.answer.verified is True
+    assert [figure.value for figure in run.answer.key_figures] == [227.5]
+    assert len(model.calls) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_failed_figure_is_sent_back_once_and_the_fixed_answer_is_verified() -> None:
+    model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, APPLE_ANSWER)
+
+    run = await ask_research_agent(_agent(model), "What is Apple's share price?")
+
+    # The retry turn told the model which figure failed and why.
+    feedback = model.calls[2][-1]
+    assert isinstance(feedback, HumanMessage)
+    assert "Change today" in feedback.text
+    assert "9.99" in feedback.text
+    assert run.answer.verified is True
+    assert run.answer.summary == "Apple's shares are up slightly today."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_figure_that_fails_twice_is_removed_and_answer_unverified() -> None:
+    second_try = ANSWER_WITH_INVENTED_CHANGE.model_copy(
+        update={"tool_calls": [{**ANSWER_WITH_INVENTED_CHANGE.tool_calls[0], "id": "answer-2"}]}
+    )
+    model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, second_try)
+
+    run = await ask_research_agent(_agent(model), "What is Apple's share price?")
+
+    assert len(model.calls) == 3  # one retry, no more
+    assert run.answer.verified is False
+    assert [figure.label for figure in run.answer.key_figures] == ["Share price"]
+    # The messages cover both attempts, so the whole run can be inspected.
+    assert isinstance(run.messages[0], HumanMessage)
+    assert run.messages[-1].type == "tool"

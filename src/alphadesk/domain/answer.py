@@ -64,9 +64,9 @@ class Answer(AnswerDraft):
     Attributes:
         as_of: When the data behind the answer was fetched (UTC). If several tools ran,
             the oldest fetch time, since an answer is only as fresh as its oldest data.
-        verified: True if every figure passed the grounding check. That check arrives in
-            Slice 7; until then this is always False, so nothing claims a check that
-            never ran.
+        verified: True if every figure passed the grounding check
+            (`services/grounding.py`). False until that check has run, so nothing claims
+            a check that never happened.
         disclaimer: Always `DISCLAIMER`.
     """
 
