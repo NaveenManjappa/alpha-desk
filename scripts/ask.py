@@ -1,4 +1,4 @@
-"""Smoke test: ask the research agent one question and log each step.
+"""Smoke test: ask the research agent one question, log each step, then print the Answer.
 
 Run with: uv run python scripts/ask.py "What is Apple's share price?"
 Makes real, paid model calls and may call Finnhub and SEC EDGAR. Needs
@@ -13,7 +13,7 @@ import sys
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tracers.langchain import wait_for_all_tracers
 
-from alphadesk.agents.research_agent import create_research_agent
+from alphadesk.agents.research_agent import answer_from_agent_state, create_research_agent
 from alphadesk.config.settings import get_settings
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
 from alphadesk.integrations.llm import get_chat_model
@@ -30,16 +30,16 @@ def _describe(message: BaseMessage) -> str:
     """One line per step, so you can see the loop without opening LangSmith."""
     if isinstance(message, AIMessage) and message.tool_calls:
         calls = ", ".join(f"{call['name']}({call['args']})" for call in message.tool_calls)
-        return f"model  -> asks for tool: {calls}"
+        return f"model  -> calls tool: {calls}"
     if isinstance(message, AIMessage):
-        return "model  -> answers (no tool calls, so the loop stops)"
+        return f"model  -> replies without a tool call: {message.text}"
     if isinstance(message, ToolMessage):
         return f"tool   -> {message.name} returned: {message.text}"
     return f"{message.type:<6} -> {message.text}"
 
 
 async def main(question: str) -> None:
-    """Run the agent once and log every message it produced, then the answer."""
+    """Run the agent once, log every message it produced, then print the typed Answer."""
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(message)s")
     configure_tracing(settings)  # before the first model call: LangSmith caches its settings
@@ -60,7 +60,9 @@ async def main(question: str) -> None:
 
     for message in result["messages"]:
         logger.info("%s", _describe(message))
-    logger.info("\nAnswer: %s", result["messages"][-1].text)
+    answer = answer_from_agent_state(result)
+    logger.info("\n%r", answer)
+    logger.info("\n%s", answer.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
