@@ -100,8 +100,8 @@ Two dataset sizes:
 
 | ADR | Decision | Leaning |
 |---|---|---|
-| 023 | What blocks a merge | Any safety case failing, or a judged score falling more than a set margin below the saved baseline |
-| 024 | Which model judges the evals | A fixed, pinned model, different from the model being judged where possible |
+| 024 | What blocks a merge | Any safety case failing, or a judged score falling more than a set margin below the saved baseline |
+| 025 | Which model judges the evals | A fixed, pinned model, different from the model being judged where possible |
 
 ---
 
@@ -372,7 +372,7 @@ Two dataset sizes:
 **Build**
 
 - Judged metrics in place for each type: faithfulness and relevance for final answers, task completion for full briefs, and a tool-use metric for trajectories.
-- The judge model pinned in config. ADR 024 written.
+- The judge model pinned in config. ADR 025 written.
 - The full set run three times with nothing changed. The spread per metric is recorded.
 - Thresholds set below the lowest of the three runs, with a small margin.
 - A saved baseline file that later runs are compared against.
@@ -402,9 +402,9 @@ Two dataset sizes:
 **Build**
 
 - A GitHub Actions workflow with two jobs.
-- Job one, on every push: `make check`.
+- Job one, on every push: `make check` and `make web-check`.
 - Job two, on pull requests: the CI eval set, using repository secrets. It compares results to the saved baseline.
-- The merge rule from ADR 023. ADR written.
+- The merge rule from ADR 024. ADR written.
 - A summary posted on the pull request: scores, changes from baseline, and the cost of the run.
 - Branch protection on `main` requiring both jobs.
 
@@ -540,7 +540,7 @@ Do these after Slice 13. Write down what happened.
 - [ ] No planted attack can create a proposal or write memory.
 - [ ] CI blocks a pull request that lowers quality.
 - [ ] Two model swaps were decided with numbers.
-- [ ] ADR 023 and ADR 024 written.
+- [ ] ADR 024 and ADR 025 written.
 - [ ] `docs/threat-model.md` and `docs/quality-report.md` exist and are linked from the README.
 - [ ] "Break it on purpose" notes written.
 - [ ] `docs/phases/phase-6-notes.md` written in your own words.

@@ -126,8 +126,8 @@ Lifetimes are settings. The figures above are starting points.
 
 | ADR | Decision | Leaning |
 |---|---|---|
-| 019 | When memory is written: during the turn, or after it | After the turn, by a separate step, so the user's reply is not slowed |
-| 020 | Where the tool-result cache sits: in the app, or in each MCP server | In each server. The server owns its data and its freshness rules. |
+| 020 | When memory is written: during the turn, or after it | After the turn, by a separate step, so the user's reply is not slowed |
+| 021 | Where the tool-result cache sits: in the app, or in each MCP server | In each server. The server owns its data and its freshness rules. |
 
 ---
 
@@ -142,7 +142,7 @@ Lifetimes are settings. The figures above are starting points.
 - `get_quote` cached in the market-data server. The key is the ticker plus a two-minute time bucket.
 - A cached result keeps its original `as_of` and quote time.
 - A log line for every hit and miss.
-- If Redis is down, the tool still works. ADR 020 written.
+- If Redis is down, the tool still works. ADR 021 written.
 
 **Done when**
 
@@ -286,7 +286,7 @@ Lifetimes are settings. The figures above are starting points.
 
 **Build**
 
-- A memory-writer step that runs after the reply is sent. ADR 019 written.
+- A memory-writer step that runs after the reply is sent. ADR 020 written.
 - The small tier reads the user's last message and proposes a `ProfileUpdate`. Most turns produce no update.
 - Code validates the update and merges it into the profile.
 - The Supervisor's planning step and the brief writer receive the profile.
@@ -405,8 +405,8 @@ Lifetimes are settings. The figures above are starting points.
 
 - `GET /memory` returns the profile, the rules and recent episodes.
 - `DELETE /memory/{kind}/{id}` removes one item. A second endpoint clears everything for the user.
-- A "What I remember" panel on the chat page, with a delete button per item.
-- The watchlist can be edited from the page.
+- A "What I remember" page in the Angular app, on its own route, with a delete button per item.
+- The watchlist can be edited there.
 
 **Done when**
 
@@ -416,7 +416,7 @@ Lifetimes are settings. The figures above are starting points.
 
 **Prompt for Claude Code**
 
-> Build Slice 9 of docs/phases/phase-4-spec.md. Thin routes over the memory module. Extend the existing page with plain JavaScript.
+> Build Slice 9 of docs/phases/phase-4-spec.md. Thin routes over the memory module. Add one route and its components to the Angular app, using the existing API client.
 
 **Explain back**
 
@@ -466,12 +466,14 @@ Lifetimes are settings. The figures above are starting points.
 - A report: cost per brief, latency, outside API calls, cache hit rate per cache, and cached prompt tokens.
 - Memory evals: the profile is recalled; an exclusion is flagged; a rule is applied; nothing leaks between two users.
 - The full eval suite run with caches on, to prove quality did not drop.
+- The UI's usage line shows cached prompt tokens, and a "served from cache" marker when the semantic cache answered. The API sends both in `usage`.
 
 **Done when**
 
 - You have a before-and-after table against the Phase 3 baseline.
 - `make eval` scores no worse with caches on.
 - The two-user leak test passes.
+- A repeat brief shows a lower cost in the browser than the first one.
 
 **Prompt for Claude Code**
 
@@ -519,7 +521,7 @@ Anything that surprises you becomes a note for a later phase.
 - [ ] The before-and-after cost and latency report is saved.
 - [ ] The two-user leak test passes.
 - [ ] The wrong-company semantic cache eval passes.
-- [ ] ADR 019 and ADR 020 written.
+- [ ] ADR 020 and ADR 021 written.
 - [ ] The demo script works from a fresh clone.
 - [ ] "Break it on purpose" notes written.
 - [ ] `docs/phases/phase-4-notes.md` written in your own words.

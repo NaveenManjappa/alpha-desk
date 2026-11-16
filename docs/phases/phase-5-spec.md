@@ -123,8 +123,8 @@ Each box is its own node. Nothing with a side effect sits in the same node as th
 
 | ADR | Decision | Leaning |
 |---|---|---|
-| 021 | How a fill updates cash, positions and the audit row | One database transaction inside the broker service |
-| 022 | What happens to a proposal when the price has moved | Expire it and ask the user again. Never fill at a price the user did not see. |
+| 022 | How a fill updates cash, positions and the audit row | One database transaction inside the broker service |
+| 023 | What happens to a proposal when the price has moved | Expire it and ask the user again. Never fill at a price the user did not see. |
 
 ---
 
@@ -193,7 +193,7 @@ Each box is its own node. Nothing with a side effect sits in the same node as th
 **Build**
 
 - A broker service: `place_order` and `cancel_order`.
-- `place_order` reads the latest quote, checks the rules again, and in **one transaction** writes the order, the ledger entry, the position change and an audit event. ADR 021 written.
+- `place_order` reads the latest quote, checks the rules again, and in **one transaction** writes the order, the ledger entry, the position change and an audit event. ADR 022 written.
 - Both exposed as tools on the paper-broker MCP server.
 - Neither tool is in any agent's allow-list.
 
@@ -371,7 +371,7 @@ Each box is its own node. Nothing with a side effect sits in the same node as th
 
 **Build**
 
-- A code node that runs after approval. It checks expiry and price drift, then calls `place_order` with the proposal's key. ADR 022 written.
+- A code node that runs after approval. It checks expiry and price drift, then calls `place_order` with the proposal's key. ADR 023 written.
 - Bounded retries on timeouts, all with the same key.
 - The proposal moves to `placed` or `failed`. The user gets a confirmation with the fill price and the new cash balance.
 - Expired or drifted proposals move to `expired`, and the user is asked whether to try again.
@@ -452,7 +452,7 @@ Each box is its own node. Nothing with a side effect sits in the same node as th
 
 ---
 
-## Slice 11: Approvals and portfolio on the page
+## Slice 11: Approvals and portfolio in the UI
 
 **Concept:** the human in the loop needs a clear place to decide.
 
@@ -472,7 +472,7 @@ Each box is its own node. Nothing with a side effect sits in the same node as th
 
 **Prompt for Claude Code**
 
-> Build Slice 11 of docs/phases/phase-5-spec.md. Extend the existing page with plain JavaScript. Thin routes. The buttons must disable on click, but safety must not depend on that.
+> Build Slice 11 of docs/phases/phase-5-spec.md. Add the proposal card as a new result type, and approvals and portfolio as new routes in the Angular app. Thin API routes. The buttons must disable on click, but safety must not depend on that.
 
 **Explain back**
 
@@ -601,7 +601,7 @@ Anything that surprises you becomes a note for a later phase.
 - [ ] `make eval` passes every safety case, and earlier phases score no worse.
 - [ ] Both crash scenarios done by hand.
 - [ ] A test asserts no agent holds a write tool.
-- [ ] ADR 021 and ADR 022 written. ADR 009 updated with the experiment.
+- [ ] ADR 022 and ADR 023 written. ADR 009 updated with the experiment.
 - [ ] The demo script works from a fresh clone.
 - [ ] "Break it on purpose" notes written.
 - [ ] `docs/phases/phase-5-notes.md` written in your own words.

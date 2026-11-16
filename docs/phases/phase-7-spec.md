@@ -27,7 +27,7 @@ Put AlphaDesk on a live URL, on free tiers, with real sign-in. It costs nothing 
 |---|---|
 | A custom domain, a CDN | Not needed for a demo |
 | Multiple regions, high availability | Beyond a free-tier personal project |
-| A richer frontend | A separate piece of work, if wanted |
+| Charts and a visual redesign of the UI | A separate piece of work, if wanted |
 | Real money or a real broker | Out of scope for the project |
 
 If Claude Code starts building any of these, stop it.
@@ -91,9 +91,9 @@ Local and cloud use the same images and the same setting names. Only the values 
 
 | ADR | Decision | Leaning |
 |---|---|---|
-| 025 | Sign-in provider | Microsoft Entra ID. It fits an Azure deploy and is free at this size. The API only validates a token, so the provider can change. |
-| 026 | How cloud resources are defined | Bicep files in the repo, so the environment can be rebuilt and torn down with one command |
-| 027 | What triggers the daily brief | A Container Apps scheduled job. A GitHub Actions schedule is the fallback. |
+| 026 | Sign-in provider | Microsoft Entra ID. It fits an Azure deploy and is free at this size. The API only validates a token, so the provider can change. |
+| 027 | How cloud resources are defined | Bicep files in the repo, so the environment can be rebuilt and torn down with one command |
+| 028 | What triggers the daily brief | A Container Apps scheduled job. A GitHub Actions schedule is the fallback. |
 
 ---
 
@@ -132,6 +132,7 @@ Local and cloud use the same images and the same setting names. Only the values 
 **Build**
 
 - A multi-stage Dockerfile for the API and one for the MCP servers: a build stage with `uv`, a slim runtime stage.
+- The API image gains a Node build stage that builds the Angular app. The runtime stage holds only the built static files, served by the API (ADR 015).
 - A non-root user. No secrets, no `.env`, no test files in the image.
 - A `.dockerignore`.
 - A health check in each image.
@@ -194,7 +195,7 @@ Local and cloud use the same images and the same setting names. Only the values 
 
 **Build**
 
-- Bicep files for: a Container Apps environment, the API app with public ingress, and three MCP server apps with internal ingress. ADR 026 written.
+- Bicep files for: a Container Apps environment, the API app with public ingress, and three MCP server apps with internal ingress. ADR 027 written.
 - Minimum replicas 0 and a low maximum on every app.
 - Secrets held as Container Apps secrets and passed as environment variables.
 - Images pushed to GitHub Container Registry.
@@ -225,7 +226,7 @@ Local and cloud use the same images and the same setting names. Only the values 
 
 **Build**
 
-- An app registration with the sign-in provider. ADR 025 written.
+- An app registration with the sign-in provider. ADR 026 written.
 - Sign-in on the page, using the provider's standard browser flow.
 - A FastAPI dependency that validates the token on every request: signature, issuer, audience, expiry.
 - The `user_id` now comes from the token. The demo user setting is used only when running locally with auth switched off.
@@ -293,6 +294,7 @@ Local and cloud use the same images and the same setting names. Only the values 
 - A global daily spend limit for the whole app, as a last line.
 - A 429 response with a clear message and the time to try again.
 - A sign-up allow-list in settings, so only invited accounts can use the deployed app.
+- A setting that shows or hides the usage line in the UI, so cost detail can be hidden on the public deploy.
 
 **Done when**
 
@@ -379,7 +381,7 @@ Skip this slice if you have no Azure OpenAI access. Note that in ADR 014.
 
 **Build**
 
-- A scheduled job that runs each weekday morning. ADR 027 written.
+- A scheduled job that runs each weekday morning. ADR 028 written.
 - For each user with a watchlist: one brief per ticker, capped at a small number per user.
 - An idempotency key of user, ticker and date. A second run on the same day creates nothing new.
 - Briefs are stored as episodes and shown on the page under "Today's briefs".
@@ -557,7 +559,7 @@ Do these after Slice 13. Write down what happened.
 - [ ] The two-user isolation tests pass.
 - [ ] The app scales to zero, and the Azure cost view confirms it.
 - [ ] The environment was torn down and rebuilt from the files at least once.
-- [ ] ADR 025, 026 and 027 written. ADR 013 and ADR 014 updated.
+- [ ] ADR 026, 027 and 028 written. ADR 013 and ADR 014 updated.
 - [ ] `docs/deploy-plan.md` and `docs/runbook.md` exist.
 - [ ] The recorded demo is linked from the README.
 - [ ] "Break it on purpose" notes written.

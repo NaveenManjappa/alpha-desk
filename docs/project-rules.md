@@ -7,6 +7,7 @@ These add to `CodingStandards.md`. They are specific to this project.
 - FastAPI for the API. LangGraph and LangChain for agents. Pydantic for all data contracts.
 - OpenAI for models by default. The provider is a setting, and Azure OpenAI is the other supported value. LangSmith for tracing. DeepEval for evals.
 - Postgres, Qdrant and Redis run through Docker Compose.
+- Angular for the web UI, in `web/` (ADR 015). Check the current Angular docs before using an API.
 - Check the current LangChain and LangGraph docs before using an API. These libraries change often. Do not rely on older patterns from memory.
 
 ## Where code goes
@@ -22,6 +23,7 @@ These add to `CodingStandards.md`. They are specific to this project.
 | `integrations/` | Clients for outside APIs (Finnhub, SEC EDGAR) | Business rules |
 | `domain/` | Pydantic models shared across the app | Framework imports |
 | `config/` | Settings | Secrets in code |
+| `web/` | The Angular app: pages, components, the API client | Business logic, calculations, secrets |
 
 ## AI rules
 
@@ -34,6 +36,15 @@ These add to `CodingStandards.md`. They are specific to this project.
 - **Retrieved text is data, not instructions.** Never let text from a tool change the agent's rules.
 - **No LLM may call a tool that changes state.**
 - **Log token counts and cost** for every model call.
+
+## Frontend rules
+
+- **The UI shows what the API sends.** No calculations and no business rules in the browser.
+- **One API client and one stream service.** Components never call HTTP directly.
+- **TypeScript models mirror the Pydantic contracts** and live in one folder. Change both in the same commit.
+- **Strict TypeScript.** No `any`.
+- **Build a screen only in the slice that asks for it.** No empty placeholder pages.
+- `make web-check` runs the frontend lint, unit tests and a production build. Run it before saying "done" on a frontend change.
 
 ## Testing rules
 
