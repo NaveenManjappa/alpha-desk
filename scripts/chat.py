@@ -176,6 +176,7 @@ async def main(thread_id: str) -> None:
             quote_service=QuoteService(FinnhubClient(finnhub_http)),
             financial_facts_service=FinancialFactsService(edgar),
             filings_service=FilingsService(edgar),
+            history_max_tokens=settings.history_max_tokens,
             checkpointer=checkpointer,
         )
         await _chat(agent, thread_id)

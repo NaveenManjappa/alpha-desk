@@ -23,6 +23,7 @@ from alphadesk.agents.research_agent import (
 )
 from alphadesk.domain.answer import DISCLAIMER, Answer, AnswerDraft
 from alphadesk.graph.checkpointer import create_checkpointer
+from alphadesk.graph.history import count_history_tokens
 from alphadesk.integrations.finnhub import FinnhubClient
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter
 from alphadesk.services.filings import FilingsService
@@ -63,7 +64,15 @@ def _quote_service() -> QuoteService:
     return QuoteService(FinnhubClient(http))
 
 
-def _agent(model: ScriptedChatModel, checkpointer: BaseCheckpointSaver | None = None) -> Any:
+# Large enough that no test trims unless it sets its own, smaller budget.
+NO_TRIMMING = 1_000_000
+
+
+def _agent(
+    model: ScriptedChatModel,
+    checkpointer: BaseCheckpointSaver | None = None,
+    history_max_tokens: int = NO_TRIMMING,
+) -> Any:
     """The agent with all three tools. EDGAR is never reached in these tests: it answers 503."""
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
     edgar = EdgarClient(http, RateLimiter(max_per_second=1000))
@@ -72,13 +81,14 @@ def _agent(model: ScriptedChatModel, checkpointer: BaseCheckpointSaver | None = 
         quote_service=_quote_service(),
         financial_facts_service=FinancialFactsService(edgar),
         filings_service=FilingsService(edgar),
+        history_max_tokens=history_max_tokens,
         checkpointer=checkpointer,
     )
 
 
-def _chat_agent(model: ScriptedChatModel) -> Any:
+def _chat_agent(model: ScriptedChatModel, history_max_tokens: int = NO_TRIMMING) -> Any:
     """The agent with a checkpointer, as `ask_research_agent` needs it."""
-    return _agent(model, create_checkpointer())
+    return _agent(model, create_checkpointer(), history_max_tokens)
 
 
 def _ask(question: str) -> dict[str, Any]:
@@ -424,3 +434,30 @@ async def test_a_turn_without_an_answer_never_returns_the_previous_answer() -> N
 async def test_asking_an_agent_without_a_checkpointer_is_refused() -> None:
     with pytest.raises(ValueError, match="checkpointer"):
         await ask_research_agent(_agent(_model(FOUR)), "What is 2 plus 2?", thread_id="t1")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_long_chat_sends_the_model_no_more_than_the_history_budget() -> None:
+    turns = 20
+    budget = 600  # roughly two turns of a price question
+    replies: list[AIMessage] = []
+    for turn in range(turns):
+        replies += [_quote_call(f"q{turn}"), _apple_answer(f"a{turn}")]
+    model = _model(*replies)
+    agent = _chat_agent(model, history_max_tokens=budget)
+
+    for turn in range(turns):
+        await ask_research_agent(agent, f"Question {turn}: how is Apple?", thread_id="long")
+
+    for sent in model.calls:
+        system, history = sent[0], sent[1:]
+        assert isinstance(system, SystemMessage)  # the system prompt is always sent
+        assert count_history_tokens(history) <= budget
+        assert isinstance(history[0], HumanMessage)  # cut only before a question
+    # The latest question is always there, and the oldest is long gone from the model.
+    assert model.calls[-1][-3].text == f"Question {turns - 1}: how is Apple?"
+    assert "Question 0: how is Apple?" not in _texts(model.calls[-1])
+    # Trimming is per call only: the checkpoint still holds the whole thread.
+    snapshot = await agent.aget_state({"configurable": {"thread_id": "long"}})
+    assert len(snapshot.values["messages"]) == turns * 5

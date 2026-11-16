@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     llm_provider: LlmProvider = "openai"
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
+    # Budget for the conversation history sent on each model call, in estimated tokens
+    # (about four characters each). Older turns beyond it are left out of the call but
+    # stay in the checkpoint. The system prompt and tool schemas are not counted.
+    history_max_tokens: int = Field(default=16_000, gt=0)
 
     # OpenAI. Model names per tier; both tiers may point at the same model.
     openai_api_key: SecretStr | None = None

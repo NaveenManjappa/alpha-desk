@@ -18,6 +18,9 @@ thread; LangGraph loads that thread's saved messages before the model runs and s
 new ones after every step. Only the new question is sent in; the history comes from the
 checkpoint.
 
+The checkpoint keeps the whole thread, but each model call is sent only the most recent
+part of it that fits the history budget (`graph/history.py`).
+
 This module decides what goes into that loop: which prompt, which tools and which output
 type. It does not choose the model or create the tools' dependencies; the caller passes
 them in.
@@ -42,6 +45,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from alphadesk.domain.answer import Answer, AnswerDraft
 from alphadesk.domain.tool_results import ToolResult
+from alphadesk.graph.history import TrimHistoryMiddleware
 from alphadesk.services.answers import finalise_answer
 from alphadesk.services.filings import FilingsService
 from alphadesk.services.financials import FinancialFactsService
@@ -98,6 +102,7 @@ def create_research_agent(
     quote_service: QuoteService,
     financial_facts_service: FinancialFactsService,
     filings_service: FilingsService,
+    history_max_tokens: int,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build the research agent.
@@ -109,6 +114,9 @@ def create_research_agent(
         quote_service: Backs `get_quote` (Finnhub).
         financial_facts_service: Backs `get_financial_facts` (SEC EDGAR).
         filings_service: Backs `list_recent_filings` (SEC EDGAR).
+        history_max_tokens: The most history, in estimated tokens, sent on each model call,
+            from `Settings.history_max_tokens`. Older turns are left out of the call but
+            stay in the checkpoint.
         checkpointer: Saves the state after every step, per thread, from
             `create_checkpointer`. Needed by `ask_research_agent`. Without one the agent
             forgets everything between calls.
@@ -129,6 +137,8 @@ def create_research_agent(
         # model, and a draft that fails validation is sent back to the model to fix
         # (handle_errors=True) instead of crashing the run.
         response_format=ToolStrategy(AnswerDraft, handle_errors=True),
+        # Trims what the model is sent, not what the checkpointer saves.
+        middleware=[TrimHistoryMiddleware(history_max_tokens)],
         checkpointer=checkpointer,
         name="research_agent",
     )

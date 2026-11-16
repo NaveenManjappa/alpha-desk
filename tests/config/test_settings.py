@@ -132,3 +132,12 @@ def test_postgres_url_is_kept_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
     assert "hunter2" not in repr(settings)
+
+
+@pytest.mark.unit
+def test_history_budget_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_HISTORY_MAX_TOKENS", "0")
+
+    with pytest.raises(ValidationError, match="history_max_tokens"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
