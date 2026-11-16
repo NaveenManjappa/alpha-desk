@@ -100,3 +100,35 @@ def test_sec_rate_limit_cannot_exceed_secs_ten_per_second(monkeypatch: pytest.Mo
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_checkpointer_is_in_memory_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.checkpointer == "memory"
+    assert settings.postgres_url is None
+
+
+@pytest.mark.unit
+def test_postgres_checkpointer_without_a_url_names_the_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_CHECKPOINTER", "postgres")
+
+    with pytest.raises(ValidationError, match="ALPHADESK_POSTGRES_URL"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_postgres_url_is_kept_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_CHECKPOINTER", "postgres")
+    monkeypatch.setenv("ALPHADESK_POSTGRES_URL", "postgresql://u:hunter2@localhost/db")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert "hunter2" not in repr(settings)

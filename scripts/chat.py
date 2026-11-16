@@ -10,7 +10,9 @@ Type a question, or one of these commands:
   /thread <id>   switch to another thread, e.g. back to an earlier one
   /quit          exit (Ctrl-D works too)
 
-Memory lives in this process (the in-memory checkpointer), so it is gone when you quit.
+Where memory lives depends on ALPHADESK_CHECKPOINTER. With "memory" it is gone when you
+quit. With "postgres" it survives: quit, run again with the same --thread, and carry on.
+Postgres needs `docker compose up -d` and `make setup-db` first.
 
 Makes real, paid model calls and may call Finnhub and SEC EDGAR. Needs
 ALPHADESK_OPENAI_API_KEY, ALPHADESK_FINNHUB_API_KEY and ALPHADESK_SEC_EDGAR_USER_AGENT.
@@ -33,7 +35,7 @@ from alphadesk.agents.research_agent import (
     create_research_agent,
 )
 from alphadesk.config.settings import get_settings
-from alphadesk.graph.checkpointer import create_checkpointer
+from alphadesk.graph.checkpointer import open_checkpointer
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
 from alphadesk.integrations.llm import get_chat_model
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter, create_edgar_http_client
@@ -155,7 +157,7 @@ async def _chat(agent: CompiledStateGraph, thread_id: str) -> None:
 
 
 async def main(thread_id: str) -> None:
-    """Build the agent with an in-memory checkpointer and chat on the given thread."""
+    """Build the agent with the configured checkpointer and chat on the given thread."""
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(message)s")
     configure_tracing(settings)  # before the first model call: LangSmith caches its settings
@@ -163,7 +165,10 @@ async def main(thread_id: str) -> None:
     async with (
         create_finnhub_http_client(settings) as finnhub_http,
         create_edgar_http_client(settings) as edgar_http,
+        # One checkpointer for the whole session: every thread's memory lives in it.
+        open_checkpointer(settings) as checkpointer,
     ):
+        logger.info("Checkpointer: %s.", settings.checkpointer)
         # One EDGAR client (and so one rate limiter) shared by both EDGAR tools.
         edgar = EdgarClient(edgar_http, RateLimiter(settings.sec_edgar_max_requests_per_second))
         agent = create_research_agent(
@@ -171,8 +176,7 @@ async def main(thread_id: str) -> None:
             quote_service=QuoteService(FinnhubClient(finnhub_http)),
             financial_facts_service=FinancialFactsService(edgar),
             filings_service=FilingsService(edgar),
-            # One checkpointer for the whole session: every thread's memory lives in it.
-            checkpointer=create_checkpointer(),
+            checkpointer=checkpointer,
         )
         await _chat(agent, thread_id)
 

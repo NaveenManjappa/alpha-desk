@@ -7,6 +7,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LlmProvider = Literal["openai", "azure_openai"]
+CheckpointerKind = Literal["memory", "postgres"]
 
 
 class Settings(BaseSettings):
@@ -67,6 +68,16 @@ class Settings(BaseSettings):
     # SEC's fair-access limit is 10 requests per second, in total. We stay well under it.
     sec_edgar_max_requests_per_second: float = Field(default=5.0, gt=0, le=10)
 
+    # --- Checkpointer: where conversation state is saved (ADR 005) ---
+    # "memory" forgets everything when the program exits; tests always use it.
+    # "postgres" survives restarts and needs postgres_url and `make setup-db`.
+    checkpointer: CheckpointerKind = "memory"
+    # e.g. postgresql://alphadesk:alphadesk@localhost:5433/alphadesk. Secret: holds a password.
+    postgres_url: SecretStr | None = None
+    # Limit for connecting and for any one statement. Whole seconds: libpq's connect
+    # timeout takes no fractions, and treats anything under 2 as 2.
+    postgres_timeout_seconds: int = Field(default=5, ge=2)
+
     @field_validator("sec_edgar_user_agent")
     @classmethod
     def _user_agent_has_contact_email(cls, value: str | None) -> str | None:
@@ -85,6 +96,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ALPHADESK_LANGSMITH_TRACING is true but ALPHADESK_LANGSMITH_API_KEY is missing. "
                 "Set the key, or turn tracing off."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_postgres_url(self) -> Self:
+        """A Postgres checkpointer with no database to talk to is a startup error."""
+        if self.checkpointer == "postgres" and not self.postgres_url:
+            raise ValueError(
+                "ALPHADESK_CHECKPOINTER is 'postgres' but ALPHADESK_POSTGRES_URL is missing. "
+                "Set the URL, or use the 'memory' checkpointer."
             )
         return self
 

@@ -36,6 +36,7 @@ make check             # creates .venv, installs dependencies, runs all checks
 | `make check` | Formats, lints, type-checks and runs the unit tests. Run it before every commit. |
 | `make eval` | Runs the eval suite against a real LLM. It costs tokens. No evals exist until Slice 13. |
 | `make run` | Starts the API. A placeholder until Slice 11. |
+| `make setup-db` | Creates the checkpoint tables in Postgres. Safe to run again. |
 
 `make check` runs these four commands in order and stops at the first failure:
 
@@ -44,6 +45,21 @@ uv run ruff format .   # code style
 uv run ruff check .    # lint: likely bugs and outdated patterns
 uv run pyright         # static type checking
 uv run pytest          # unit tests (evals excluded)
+```
+
+## Local database
+
+Conversation memory is saved in Postgres when `ALPHADESK_CHECKPOINTER=postgres` (the value in `.env.example`). Start the database and create its tables once:
+
+```bash
+docker compose up -d   # Postgres on localhost:5433; data kept in a Docker volume
+make setup-db          # creates the `checkpoints` schema and tables
+```
+
+With `ALPHADESK_CHECKPOINTER=memory`, nothing needs Docker, but memory is lost when the program exits. Unit tests always use memory. To run the Postgres integration tests:
+
+```bash
+TEST_POSTGRES_URL=postgresql://alphadesk:alphadesk@localhost:5433/alphadesk uv run pytest -m integration
 ```
 
 ## Configuration
