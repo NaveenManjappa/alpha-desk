@@ -1,5 +1,6 @@
 """Tests for the research agent loop. No real LLM and no network: a scripted fake model
-plays the LLM, and the real tools, services and clients sit on in-memory httpx transports."""
+plays the LLM, the real tools, services and clients sit on in-memory httpx transports, and
+the checkpointer keeps its state in memory."""
 
 import json
 from collections.abc import Iterator, Sequence
@@ -10,6 +11,7 @@ import httpx
 import pytest
 from langchain_core.language_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import Field
 
 from alphadesk.agents.research_agent import (
@@ -19,7 +21,8 @@ from alphadesk.agents.research_agent import (
     create_research_agent,
     load_system_prompt,
 )
-from alphadesk.domain.answer import DISCLAIMER, Answer
+from alphadesk.domain.answer import DISCLAIMER, Answer, AnswerDraft
+from alphadesk.graph.checkpointer import create_checkpointer
 from alphadesk.integrations.finnhub import FinnhubClient
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter
 from alphadesk.services.filings import FilingsService
@@ -60,7 +63,7 @@ def _quote_service() -> QuoteService:
     return QuoteService(FinnhubClient(http))
 
 
-def _agent(model: ScriptedChatModel) -> Any:
+def _agent(model: ScriptedChatModel, checkpointer: BaseCheckpointSaver | None = None) -> Any:
     """The agent with all three tools. EDGAR is never reached in these tests: it answers 503."""
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
     edgar = EdgarClient(http, RateLimiter(max_per_second=1000))
@@ -69,7 +72,13 @@ def _agent(model: ScriptedChatModel) -> Any:
         quote_service=_quote_service(),
         financial_facts_service=FinancialFactsService(edgar),
         filings_service=FilingsService(edgar),
+        checkpointer=checkpointer,
     )
+
+
+def _chat_agent(model: ScriptedChatModel) -> Any:
+    """The agent with a checkpointer, as `ask_research_agent` needs it."""
+    return _agent(model, create_checkpointer())
 
 
 def _ask(question: str) -> dict[str, Any]:
@@ -255,7 +264,7 @@ ANSWER_WITH_INVENTED_CHANGE = _answer_call(
 async def test_grounded_answer_is_verified_without_a_retry() -> None:
     model = _model(ASK_FOR_QUOTE, APPLE_ANSWER)
 
-    run = await ask_research_agent(_agent(model), "What is Apple's share price?")
+    run = await ask_research_agent(_chat_agent(model), "What is Apple's share price?", "t1")
 
     assert run.answer.verified is True
     assert [figure.value for figure in run.answer.key_figures] == [227.5]
@@ -267,7 +276,7 @@ async def test_grounded_answer_is_verified_without_a_retry() -> None:
 async def test_failed_figure_is_sent_back_once_and_the_fixed_answer_is_verified() -> None:
     model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, APPLE_ANSWER)
 
-    run = await ask_research_agent(_agent(model), "What is Apple's share price?")
+    run = await ask_research_agent(_chat_agent(model), "What is Apple's share price?", "t1")
 
     # The retry turn told the model which figure failed and why.
     feedback = model.calls[2][-1]
@@ -286,7 +295,7 @@ async def test_figure_that_fails_twice_is_removed_and_answer_unverified() -> Non
     )
     model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, second_try)
 
-    run = await ask_research_agent(_agent(model), "What is Apple's share price?")
+    run = await ask_research_agent(_chat_agent(model), "What is Apple's share price?", "t1")
 
     assert len(model.calls) == 3  # one retry, no more
     assert run.answer.verified is False
@@ -294,3 +303,124 @@ async def test_figure_that_fails_twice_is_removed_and_answer_unverified() -> Non
     # The messages cover both attempts, so the whole run can be inspected.
     assert isinstance(run.messages[0], HumanMessage)
     assert run.messages[-1].type == "tool"
+
+
+# --- Conversation memory (Slice 8) ------------------------------------------------------
+
+
+def _quote_call(call_id: str) -> AIMessage:
+    """A fresh `get_quote` call. Each turn needs its own message: one thread holds them all."""
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": "get_quote", "args": {"ticker": "AAPL"}, "id": call_id}],
+    )
+
+
+def _apple_answer(call_id: str) -> AIMessage:
+    return _answer_call(
+        call_id=call_id,
+        summary="Apple's shares are up slightly today.",
+        key_figures=[APPLE_PRICE],
+        sources=[APPLE_PRICE["source_url"]],
+    )
+
+
+def _texts(messages: Sequence[BaseMessage]) -> list[str]:
+    return [message.text for message in messages]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_follow_up_on_the_same_thread_sees_the_earlier_turn() -> None:
+    model = _model(_quote_call("q1"), _apple_answer("a1"), _quote_call("q2"), _apple_answer("a2"))
+    agent = _chat_agent(model)
+
+    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    await ask_research_agent(agent, "And its price again?", thread_id="apple")
+
+    # The model's first call of turn two (call index 2) includes turn one's question.
+    second_turn = _texts(model.calls[2])
+    assert "How is Apple doing?" in second_turn
+    assert second_turn[-1] == "And its price again?"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_new_thread_starts_with_no_memory() -> None:
+    model = _model(_quote_call("q1"), _apple_answer("a1"), FOUR)
+    agent = _chat_agent(model)
+
+    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    await ask_research_agent(agent, "What is 2 plus 2?", thread_id="other")
+
+    other_thread = _texts(model.calls[2])
+    assert "How is Apple doing?" not in other_thread
+    assert other_thread[-1] == "What is 2 plus 2?"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_saved_state_for_a_thread_can_be_read_back() -> None:
+    agent = _chat_agent(_model(_quote_call("q1"), _apple_answer("a1")))
+
+    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    snapshot = await agent.aget_state({"configurable": {"thread_id": "apple"}})
+
+    messages = snapshot.values["messages"]
+    assert [type(m) for m in messages] == [
+        HumanMessage,
+        AIMessage,
+        ToolMessage,
+        AIMessage,
+        ToolMessage,
+    ]
+    assert messages[0].text == "How is Apple doing?"
+    # The answer was saved too, and came back out of the checkpoint as an AnswerDraft.
+    assert isinstance(snapshot.values["structured_response"], AnswerDraft)
+    assert snapshot.next == ()  # finished: no step is waiting to run
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_run_messages_hold_only_this_turn() -> None:
+    model = _model(_quote_call("q1"), _apple_answer("a1"), _quote_call("q2"), _apple_answer("a2"))
+    agent = _chat_agent(model)
+
+    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    run = await ask_research_agent(agent, "And its price again?", thread_id="apple")
+
+    assert run.messages[0].text == "And its price again?"
+    assert len(run.messages) == 5
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_data_from_an_earlier_turn_does_not_ground_a_new_answer() -> None:
+    # Turn two copies the price from turn one without fetching it again, twice.
+    model = _model(_quote_call("q1"), _apple_answer("a1"), _apple_answer("a2"), _apple_answer("a3"))
+    agent = _chat_agent(model)
+
+    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    run = await ask_research_agent(agent, "And its price again?", thread_id="apple")
+
+    assert run.answer.verified is False
+    assert run.answer.key_figures == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_turn_without_an_answer_never_returns_the_previous_answer() -> None:
+    model = _model(_quote_call("q1"), _apple_answer("a1"), AIMessage("I can't help with that."))
+    agent = _chat_agent(model)
+
+    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+
+    with pytest.raises(NoAnswerError):
+        await ask_research_agent(agent, "Tell me a secret.", thread_id="apple")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_asking_an_agent_without_a_checkpointer_is_refused() -> None:
+    with pytest.raises(ValueError, match="checkpointer"):
+        await ask_research_agent(_agent(_model(FOUR)), "What is 2 plus 2?", thread_id="t1")
