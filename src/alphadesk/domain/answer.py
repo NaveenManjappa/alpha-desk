@@ -73,3 +73,11 @@ class Answer(AnswerDraft):
     as_of: AwareDatetime
     verified: bool
     disclaimer: str
+
+
+class NoAnswerError(Exception):
+    """The agent stopped without producing an `AnswerDraft`, for example after a refusal.
+
+    Defined here rather than in `agents/` so that `services/` can catch it without
+    importing LangChain.
+    """

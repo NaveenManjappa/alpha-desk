@@ -35,7 +35,7 @@ make check             # creates .venv, installs dependencies, runs all checks
 |---|---|
 | `make check` | Formats, lints, type-checks and runs the unit tests. Run it before every commit. |
 | `make eval` | Runs the eval suite against a real LLM. It costs tokens. No evals exist until Slice 13. |
-| `make run` | Starts the API. A placeholder until Slice 11. |
+| `make run` | Starts the API on http://localhost:8000. Interactive docs at `/docs`. |
 | `make setup-db` | Creates the checkpoint tables in Postgres. Safe to run again. |
 
 `make check` runs these four commands in order and stops at the first failure:
@@ -60,6 +60,23 @@ With `ALPHADESK_CHECKPOINTER=memory`, nothing needs Docker, but memory is lost w
 
 ```bash
 TEST_POSTGRES_URL=postgresql://alphadesk:alphadesk@localhost:5433/alphadesk uv run pytest -m integration
+```
+
+## Running the API
+
+```bash
+docker compose up -d   # only with ALPHADESK_CHECKPOINTER=postgres
+make run               # http://localhost:8000, docs at http://localhost:8000/docs
+```
+
+`POST /chat` streams [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events): `status` when a tool starts, `token` as model text arrives, then one `final` (with the `Answer`) or one `error`. Send the same `thread_id` again to continue the conversation. `-N` stops curl buffering the stream:
+
+```bash
+curl -N -X POST http://localhost:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "What is Apple'\''s share price?", "thread_id": "demo"}'
+
+curl -i http://localhost:8000/health   # 503 if Postgres is configured but unreachable
 ```
 
 ## Configuration

@@ -9,6 +9,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import psycopg
 from psycopg import AsyncConnection, sql
 from psycopg.rows import DictRow, dict_row
 
@@ -61,6 +62,32 @@ async def connect_to_postgres(
     ) as connection:
         logger.debug("Connected to Postgres, schema %s.", schema)
         yield connection
+
+
+async def postgres_is_reachable(settings: Settings) -> bool:
+    """Open a fresh connection and run `SELECT 1`: can the database answer right now?
+
+    A fresh connection, rather than the checkpointer's, so the check tests that new
+    connections can be made, and never waits behind a running chat turn.
+
+    Args:
+        settings: Supplies `postgres_url` and the timeout, which bounds the check.
+
+    Returns:
+        True if the query ran. False if the database could not be reached or failed; the
+        reason is logged.
+
+    Raises:
+        ValueError: `postgres_url` is not set. Check it is set before calling.
+    """
+    try:
+        async with connect_to_postgres(settings, "public") as connection:
+            await connection.execute("SELECT 1")
+    except psycopg.Error as error:
+        # The error's type only: its message can include the host and user name.
+        logger.warning("Postgres health check failed: %s.", type(error).__name__)
+        return False
+    return True
 
 
 async def create_schema(connection: AsyncConnection[DictRow], schema: str) -> None:

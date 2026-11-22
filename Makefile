@@ -11,10 +11,10 @@ check:
 eval:
 	uv run pytest -m eval
 
-# The API arrives in Slice 11; until then there is nothing to start.
+# Start the API on http://localhost:8000, reloading when code changes.
+# With ALPHADESK_CHECKPOINTER=postgres, start Postgres first: docker compose up -d
 run:
-	@echo "No API yet: 'make run' is wired up in Slice 11."
-	@exit 1
+	uv run uvicorn alphadesk.api.app:create_app --factory --reload --port 8000
 
 # Create the checkpoint tables in Postgres. Start it first: docker compose up -d
 setup-db:

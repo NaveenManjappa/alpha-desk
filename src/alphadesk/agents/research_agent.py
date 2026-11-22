@@ -21,13 +21,19 @@ checkpoint.
 The checkpoint keeps the whole thread, but each model call is sent only the most recent
 part of it that fits the history budget (`graph/history.py`).
 
+The agent runs with `astream`, so progress can be shown while it works.
+`stream_research_agent` turns what the graph streams into chat events: a `status` event
+each time the model decides to call a data tool, a `token` event for each piece of text the
+model writes, and a `final` event with the grounded answer. `ask_research_agent` runs the
+same stream and returns only the result.
+
 This module decides what goes into that loop: which prompt, which tools and which output
 type. It does not choose the model or create the tools' dependencies; the caller passes
 them in.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.resources import files
@@ -37,13 +43,20 @@ from uuid import uuid4
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import TypeAdapter, ValidationError
 
-from alphadesk.domain.answer import Answer, AnswerDraft
+from alphadesk.domain.answer import Answer, AnswerDraft, NoAnswerError
+from alphadesk.domain.chat_events import FinalEvent, ProgressEvent, StatusEvent, TokenEvent
 from alphadesk.domain.tool_results import ToolResult
 from alphadesk.graph.history import TrimHistoryMiddleware
 from alphadesk.services.answers import finalise_answer
@@ -64,9 +77,20 @@ _RETRY_PROMPT_FILE = "grounding_retry.md"
 # TypeAdapter compiles a validator, which is slow to repeat on every message.
 _tool_result_adapter: TypeAdapter[ToolResult] = TypeAdapter(ToolResult)
 
+# The names of the two nodes `create_agent` builds, as they appear in streamed metadata.
+_MODEL_NODE = "model"
 
-class NoAnswerError(Exception):
-    """The agent stopped without producing an `AnswerDraft`, for example after a refusal."""
+# `ToolStrategy` names the answer tool after the output class. Calling it ends the run; it
+# fetches no data, so it gets no status event.
+_ANSWER_TOOL = AnswerDraft.__name__
+
+# What the user is shown when the model calls each data tool. A tool missing here still
+# gets a status event, with a plain fallback message.
+_TOOL_STATUS = {
+    "get_quote": "Getting the latest share price",
+    "get_financial_facts": "Reading reported financials from SEC EDGAR",
+    "list_recent_filings": "Listing recent SEC filings",
+}
 
 
 @dataclass(frozen=True)
@@ -159,6 +183,8 @@ async def ask_research_agent(
     The grounding check and `as_of` use only this turn's tool results. Data fetched for an
     earlier question may be stale, so every figure must be fetched again for this one.
 
+    `stream_research_agent` runs the same turn but also reports progress as it goes.
+
     Args:
         agent: From `create_research_agent`, with a checkpointer.
         question: The user's question.
@@ -172,13 +198,63 @@ async def ask_research_agent(
         ValueError: The agent has no checkpointer, so it cannot hold a conversation.
         NoAnswerError: The agent finished without an `AnswerDraft`.
     """
+    run: ResearchRun | None = None
+    async for item in _research_turn(agent, question, thread_id):
+        if isinstance(item, ResearchRun):
+            run = item
+    if run is None:
+        # `_research_turn` always ends with a ResearchRun or raises, so this means a bug.
+        raise RuntimeError("The research turn ended without a result.")
+    return run
+
+
+async def stream_research_agent(
+    agent: CompiledStateGraph, question: str, thread_id: str
+) -> AsyncIterator[ProgressEvent | FinalEvent]:
+    """Ask the agent a question on a thread, yielding progress events, then the answer.
+
+    The same turn as `ask_research_agent`, grounding retry included, but each step is
+    reported as it happens: a `StatusEvent` when the model calls a data tool, a
+    `TokenEvent` for any text the model writes, and finally one `FinalEvent` with the
+    grounded answer. If the grounding check sends the agent round again, the events of
+    both attempts are yielded, in order.
+
+    Args:
+        agent: From `create_research_agent`, with a checkpointer.
+        question: The user's question.
+        thread_id: Names the conversation. Reuse it to continue.
+
+    Yields:
+        Progress events, then exactly one `FinalEvent`, which is always last.
+
+    Raises:
+        ValueError: The agent has no checkpointer.
+        NoAnswerError: The agent finished without an `AnswerDraft`. Raised after any
+            progress events already yielded.
+    """
+    async for item in _research_turn(agent, question, thread_id):
+        if isinstance(item, ResearchRun):
+            yield FinalEvent(answer=item.answer)
+        else:
+            yield item
+
+
+async def _research_turn(
+    agent: CompiledStateGraph, question: str, thread_id: str
+) -> AsyncIterator[ProgressEvent | ResearchRun]:
+    """One grounded turn: progress events as they happen, then the `ResearchRun`, last.
+
+    Both public functions are built on this one, so the turn's logic is written once.
+    """
     if not isinstance(agent.checkpointer, BaseCheckpointSaver):
-        raise ValueError("ask_research_agent needs an agent built with a checkpointer.")
+        raise ValueError("The research agent needs a checkpointer to hold a conversation.")
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     # Our own ID on the question, so this turn's messages can be found in the thread.
     question_message = HumanMessage(question, id=str(uuid4()))
 
-    state = await agent.ainvoke({"messages": [question_message]}, config)
+    async for event in _stream_attempt(agent, question_message, config):
+        yield event
+    state = await _saved_state(agent, config)
     turn = messages_since(state["messages"], question_message)
     answer = answer_from_agent_state(state, turn)
     failures = check_grounding(answer, tool_results_from_messages(turn))
@@ -187,13 +263,83 @@ async def ask_research_agent(
         logger.info("Retrying the research agent once after a failed grounding check.")
         # Only the feedback is sent: the first attempt is already saved on the thread.
         feedback = HumanMessage(_retry_prompt(failures))
-        state = await agent.ainvoke({"messages": [feedback]}, config)
+        async for event in _stream_attempt(agent, feedback, config):
+            yield event
+        state = await _saved_state(agent, config)
         # This turn now spans both attempts, so the first attempt's tool results count too.
         turn = messages_since(state["messages"], question_message)
         answer = answer_from_agent_state(state, turn)
         failures = check_grounding(answer, tool_results_from_messages(turn))
 
-    return ResearchRun(answer=apply_grounding(answer, failures), messages=turn)
+    yield ResearchRun(answer=apply_grounding(answer, failures), messages=turn)
+
+
+async def _stream_attempt(
+    agent: CompiledStateGraph, message: HumanMessage, config: RunnableConfig
+) -> AsyncIterator[ProgressEvent]:
+    """Run the agent once on the thread with one new message, yielding progress events.
+
+    Two stream modes run at once:
+
+    - "messages" yields each piece of model output as the provider sends it, with metadata
+      naming the graph node that produced it. Only text from the model node becomes a
+      token; this mode also carries the tool messages, which are not for the user.
+    - "updates" yields each node's output once the node finishes. When the model node
+      finishes with tool calls, those tools run next, so that is the moment for a status.
+
+    `version="v2"` makes every part a dict with `type`, `ns` and `data` keys, whichever
+    modes are on. (LangGraph also offers `stream_events(version="v3")`, which its docs
+    now recommend, but in the installed version it is marked experimental.)
+    """
+    async for part in agent.astream(
+        {"messages": [message]},
+        config,
+        stream_mode=["messages", "updates"],
+        version="v2",
+    ):
+        if part["type"] == "messages":
+            chunk, metadata = part["data"]
+            if (
+                metadata.get("langgraph_node") == _MODEL_NODE
+                and isinstance(chunk, AIMessageChunk)
+                and chunk.text
+            ):
+                yield TokenEvent(text=chunk.text)
+        elif part["type"] == "updates":
+            for event in _status_events(part["data"]):
+                yield event
+
+
+def _status_events(update: dict[str, Any]) -> list[StatusEvent]:
+    """A status event for each data tool the model just asked for, in the order asked.
+
+    Args:
+        update: One "updates" part's data: each node that finished, mapped to its output.
+    """
+    model_output = update.get(_MODEL_NODE)
+    if not isinstance(model_output, dict):
+        return []
+    events: list[StatusEvent] = []
+    for message in model_output.get("messages", []):
+        if not isinstance(message, AIMessage):
+            continue
+        for call in message.tool_calls:
+            name = call["name"]
+            if name == _ANSWER_TOOL:
+                continue
+            status = _TOOL_STATUS.get(name, f"Running {name}")
+            events.append(StatusEvent(tool=name, message=status))
+    return events
+
+
+async def _saved_state(agent: CompiledStateGraph, config: RunnableConfig) -> dict[str, Any]:
+    """The thread's state as the checkpointer saved it at the end of the last run.
+
+    `astream` yields progress, not the final state, so it is read back afterwards. It has
+    the same `messages` and `structured_response` that `ainvoke` would have returned.
+    """
+    snapshot = await agent.aget_state(config)
+    return snapshot.values
 
 
 def answer_from_agent_state(

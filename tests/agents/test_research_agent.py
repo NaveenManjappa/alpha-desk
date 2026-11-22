@@ -3,6 +3,7 @@ plays the LLM, the real tools, services and clients sit on in-memory httpx trans
 the checkpointer keeps its state in memory."""
 
 import json
+import re
 from collections.abc import Iterator, Sequence
 from datetime import datetime
 from typing import Any
@@ -10,18 +11,28 @@ from typing import Any
 import httpx
 import pytest
 from langchain_core.language_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.messages.tool import tool_call_chunk
+from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import Field
 
 from alphadesk.agents.research_agent import (
-    NoAnswerError,
     answer_from_agent_state,
     ask_research_agent,
     create_research_agent,
     load_system_prompt,
+    stream_research_agent,
 )
-from alphadesk.domain.answer import DISCLAIMER, Answer, AnswerDraft
+from alphadesk.domain.answer import DISCLAIMER, Answer, AnswerDraft, NoAnswerError
+from alphadesk.domain.chat_events import FinalEvent, StatusEvent, TokenEvent
 from alphadesk.graph.checkpointer import create_checkpointer
 from alphadesk.graph.history import count_history_tokens
 from alphadesk.integrations.finnhub import FinnhubClient
@@ -48,6 +59,34 @@ class ScriptedChatModel(GenericFakeChatModel):
     def _generate(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Any:
         self.calls.append(list(messages))
         return super()._generate(messages, *args, **kwargs)
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """Stream the next reply: its text word by word, then its tool calls.
+
+        The agent runs with `astream`, which makes LangChain stream the model. The parent
+        class's `_stream` drops tool calls, so this one sends them as one final chunk, the
+        way a provider sends tool-call fragments.
+        """
+        reply = self._generate(messages, stop=stop, **kwargs).generations[0].message
+        assert isinstance(reply, AIMessage)
+        for word in re.split(r"(\s)", reply.text):
+            if word:
+                yield ChatGenerationChunk(message=AIMessageChunk(content=word, id=reply.id))
+        tool_call_chunks = [
+            tool_call_chunk(
+                name=call["name"], args=json.dumps(call["args"]), id=call["id"], index=index
+            )
+            for index, call in enumerate(reply.tool_calls)
+        ]
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(content="", id=reply.id, tool_call_chunks=tool_call_chunks)
+        )
 
 
 def _model(*replies: AIMessage) -> ScriptedChatModel:
@@ -461,3 +500,81 @@ async def test_a_long_chat_sends_the_model_no_more_than_the_history_budget() -> 
     # Trimming is per call only: the checkpoint still holds the whole thread.
     snapshot = await agent.aget_state({"configurable": {"thread_id": "long"}})
     assert len(snapshot.values["messages"]) == turns * 5
+
+
+# --- Streaming (Slice 11) ---------------------------------------------------------------
+
+
+async def _stream(agent: Any, question: str, thread_id: str = "t1") -> list[Any]:
+    return [event async for event in stream_research_agent(agent, question, thread_id)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stream_sends_a_status_when_a_tool_starts_then_the_final_answer() -> None:
+    events = await _stream(_chat_agent(_model(ASK_FOR_QUOTE, APPLE_ANSWER)), "Apple price?")
+
+    assert events[0] == StatusEvent(tool="get_quote", message="Getting the latest share price")
+    assert isinstance(events[-1], FinalEvent)
+    assert events[-1].answer.verified is True
+    assert len(events) == 2  # the answer tool gets no status of its own
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stream_sends_the_model_text_as_tokens_as_it_arrives() -> None:
+    thinking = ASK_FOR_QUOTE.model_copy(update={"content": "Let me check."})
+
+    events = await _stream(_chat_agent(_model(thinking, APPLE_ANSWER)), "Apple price?")
+
+    tokens = [event.text for event in events if isinstance(event, TokenEvent)]
+    assert "".join(tokens) == "Let me check."
+    assert len(tokens) > 1  # in pieces, not one block at the end
+    # Tokens arrive while the model writes, so before the status for the tool it then calls.
+    assert isinstance(events[0], TokenEvent)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_tool_results_are_never_streamed_as_tokens() -> None:
+    events = await _stream(_chat_agent(_model(ASK_FOR_QUOTE, APPLE_ANSWER)), "Apple price?")
+
+    assert not any(isinstance(event, TokenEvent) for event in events)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stream_covers_both_attempts_when_grounding_retries() -> None:
+    model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, ASK_FOR_QUOTE, APPLE_ANSWER)
+
+    events = await _stream(_chat_agent(model), "Apple price?")
+
+    statuses = [event for event in events if isinstance(event, StatusEvent)]
+    assert len(statuses) == 2  # one per attempt
+    finals = [event for event in events if isinstance(event, FinalEvent)]
+    assert len(finals) == 1
+    assert events[-1] is finals[0]
+    assert finals[0].answer.verified is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_streams_on_the_same_thread_continue_one_conversation() -> None:
+    model = _model(ASK_FOR_QUOTE, APPLE_ANSWER, FOUR)
+    agent = _chat_agent(model)
+
+    await _stream(agent, "How is Apple doing?", thread_id="apple")
+    await _stream(agent, "And what is 2 plus 2?", thread_id="apple")
+
+    sent = [message.text for message in model.calls[-1]]
+    assert "How is Apple doing?" in sent
+    assert "And what is 2 plus 2?" in sent
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stream_without_an_answer_raises_after_its_progress() -> None:
+    refusal = AIMessage(content="I can't help with that.")
+
+    with pytest.raises(NoAnswerError):
+        await _stream(_chat_agent(_model(refusal)), "Tell me a secret.")
