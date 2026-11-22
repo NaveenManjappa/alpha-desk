@@ -11,6 +11,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from alphadesk.config.settings import Settings
+from alphadesk.domain.usage import ModelPrice
 
 ModelTier = Literal["small", "large"]
 
@@ -50,5 +51,27 @@ def get_chat_model(tier: ModelTier, settings: Settings) -> BaseChatModel:
         base_url=base_url,
         api_key=api_key,
         timeout=settings.llm_timeout_seconds,
+        # The OpenAI SDK retries connection errors, 408, 409, 429 and 5xx, with
+        # exponential backoff. It does not retry a bad request or a rejected key.
         max_retries=settings.llm_max_retries,
+        # Ask for token counts on streamed replies too. LangChain turns this on by
+        # itself only for OpenAI's own URL, so without it Azure runs would report zero.
+        stream_usage=True,
+    )
+
+
+def get_model_price(tier: ModelTier, settings: Settings) -> ModelPrice:
+    """The configured price of a tier's model, for the cost estimate.
+
+    By tier, like `get_chat_model`, so it works the same whichever provider and model
+    name the tier points at.
+    """
+    if tier == "small":
+        return ModelPrice(
+            input_usd_per_million=settings.llm_price_small_input_per_million,
+            output_usd_per_million=settings.llm_price_small_output_per_million,
+        )
+    return ModelPrice(
+        input_usd_per_million=settings.llm_price_large_input_per_million,
+        output_usd_per_million=settings.llm_price_large_output_per_million,
     )

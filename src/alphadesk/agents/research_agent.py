@@ -21,6 +21,14 @@ checkpoint.
 The checkpoint keeps the whole thread, but each model call is sent only the most recent
 part of it that fits the history budget (`graph/history.py`).
 
+Each run may call the model at most `max_model_calls` times. A model that keeps calling
+tools without answering is stopped with `RunLimitError` instead of spending tokens
+forever. The check runs before each model call, so a stopped thread never ends on a tool
+call that has no result, and the next question on it works as normal.
+
+Each turn also reports its `RunUsage`: time, tokens (as the provider counted them) and
+estimated cost. It goes out in the `final` event and is saved in the thread, on the answer.
+
 The agent runs with `astream`, so progress can be shown while it works.
 `stream_research_agent` turns what the graph streams into chat events: a `status` event
 each time the model decides to call a data tool, a `token` event for each piece of text the
@@ -33,6 +41,7 @@ them in.
 """
 
 import logging
+import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,6 +50,8 @@ from typing import Any
 from uuid import uuid4
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
+from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -57,13 +68,16 @@ from pydantic import TypeAdapter, ValidationError
 
 from alphadesk.domain.answer import Answer, AnswerDraft, NoAnswerError
 from alphadesk.domain.chat_events import FinalEvent, ProgressEvent, StatusEvent, TokenEvent
+from alphadesk.domain.errors import RunLimitError
 from alphadesk.domain.tool_results import ToolResult
+from alphadesk.domain.usage import ModelPrice, RunUsage
 from alphadesk.graph.history import TrimHistoryMiddleware
 from alphadesk.services.answers import finalise_answer
 from alphadesk.services.filings import FilingsService
 from alphadesk.services.financials import FinancialFactsService
 from alphadesk.services.grounding import GroundingFailure, apply_grounding, check_grounding
 from alphadesk.services.quotes import QuoteService
+from alphadesk.services.usage import summarise_usage
 from alphadesk.tools.filings_tool import make_list_recent_filings_tool
 from alphadesk.tools.financial_facts_tool import make_get_financial_facts_tool
 from alphadesk.tools.quote_tool import make_get_quote_tool
@@ -101,10 +115,12 @@ class ResearchRun:
         answer: The grounded answer, with `verified` set by the grounding check.
         messages: Every message of this turn, from the question on, across both attempts
             if there was a retry. Earlier turns stay in the thread's checkpoint.
+        usage: Time, tokens and estimated cost of the whole turn, both attempts included.
     """
 
     answer: Answer
     messages: list[BaseMessage]
+    usage: RunUsage
 
 
 def load_system_prompt() -> str:
@@ -127,6 +143,7 @@ def create_research_agent(
     financial_facts_service: FinancialFactsService,
     filings_service: FilingsService,
     history_max_tokens: int,
+    max_model_calls: int,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Build the research agent.
@@ -141,6 +158,8 @@ def create_research_agent(
         history_max_tokens: The most history, in estimated tokens, sent on each model call,
             from `Settings.history_max_tokens`. Older turns are left out of the call but
             stay in the checkpoint.
+        max_model_calls: The most model calls one run may make, from
+            `Settings.agent_max_model_calls`. One more raises `RunLimitError`.
         checkpointer: Saves the state after every step, per thread, from
             `create_checkpointer`. Needed by `ask_research_agent`. Without one the agent
             forgets everything between calls.
@@ -148,6 +167,15 @@ def create_research_agent(
     Returns:
         A compiled graph. `ask_research_agent` is the normal way to run it.
     """
+    # Typed as the base class: each middleware adds its own fields to the state, and the
+    # type checker cannot see that a list of different ones still fits `create_agent`.
+    middleware: list[AgentMiddleware[Any, Any, Any]] = [
+        # Counts model calls in this run and raises before one call too many. "error"
+        # rather than "end": "end" would save a fake model message into the thread.
+        ModelCallLimitMiddleware(run_limit=max_model_calls, exit_behavior="error"),
+        # Trims what the model is sent, not what the checkpointer saves.
+        TrimHistoryMiddleware(history_max_tokens),
+    ]
     return create_agent(
         model=model,
         tools=[
@@ -161,15 +189,14 @@ def create_research_agent(
         # model, and a draft that fails validation is sent back to the model to fix
         # (handle_errors=True) instead of crashing the run.
         response_format=ToolStrategy(AnswerDraft, handle_errors=True),
-        # Trims what the model is sent, not what the checkpointer saves.
-        middleware=[TrimHistoryMiddleware(history_max_tokens)],
+        middleware=middleware,
         checkpointer=checkpointer,
         name="research_agent",
     )
 
 
 async def ask_research_agent(
-    agent: CompiledStateGraph, question: str, thread_id: str
+    agent: CompiledStateGraph, question: str, thread_id: str, *, price: ModelPrice
 ) -> ResearchRun:
     """Ask the agent a question on a thread and return an answer whose figures were checked.
 
@@ -190,16 +217,18 @@ async def ask_research_agent(
         question: The user's question.
         thread_id: Names the conversation. Reuse it to continue; use a new one to start
             fresh.
+        price: The price of the agent's model, from `get_model_price`, for the usage.
 
     Returns:
-        The grounded answer and every message of this turn.
+        The grounded answer, every message of this turn and its usage.
 
     Raises:
         ValueError: The agent has no checkpointer, so it cannot hold a conversation.
         NoAnswerError: The agent finished without an `AnswerDraft`.
+        RunLimitError: The agent reached its model call limit without answering.
     """
     run: ResearchRun | None = None
-    async for item in _research_turn(agent, question, thread_id):
+    async for item in _research_turn(agent, question, thread_id, price):
         if isinstance(item, ResearchRun):
             run = item
     if run is None:
@@ -209,7 +238,7 @@ async def ask_research_agent(
 
 
 async def stream_research_agent(
-    agent: CompiledStateGraph, question: str, thread_id: str
+    agent: CompiledStateGraph, question: str, thread_id: str, *, price: ModelPrice
 ) -> AsyncIterator[ProgressEvent | FinalEvent]:
     """Ask the agent a question on a thread, yielding progress events, then the answer.
 
@@ -223,24 +252,27 @@ async def stream_research_agent(
         agent: From `create_research_agent`, with a checkpointer.
         question: The user's question.
         thread_id: Names the conversation. Reuse it to continue.
+        price: The price of the agent's model, from `get_model_price`, for the usage.
 
     Yields:
-        Progress events, then exactly one `FinalEvent`, which is always last.
+        Progress events, then exactly one `FinalEvent` with the answer and its usage,
+        which is always last.
 
     Raises:
         ValueError: The agent has no checkpointer.
         NoAnswerError: The agent finished without an `AnswerDraft`. Raised after any
             progress events already yielded.
+        RunLimitError: The agent reached its model call limit. Raised the same way.
     """
-    async for item in _research_turn(agent, question, thread_id):
+    async for item in _research_turn(agent, question, thread_id, price):
         if isinstance(item, ResearchRun):
-            yield FinalEvent(answer=item.answer)
+            yield FinalEvent(answer=item.answer, usage=item.usage)
         else:
             yield item
 
 
 async def _research_turn(
-    agent: CompiledStateGraph, question: str, thread_id: str
+    agent: CompiledStateGraph, question: str, thread_id: str, price: ModelPrice
 ) -> AsyncIterator[ProgressEvent | ResearchRun]:
     """One grounded turn: progress events as they happen, then the `ResearchRun`, last.
 
@@ -248,6 +280,7 @@ async def _research_turn(
     """
     if not isinstance(agent.checkpointer, BaseCheckpointSaver):
         raise ValueError("The research agent needs a checkpointer to hold a conversation.")
+    started = time.perf_counter()
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     # Our own ID on the question, so this turn's messages can be found in the thread.
     question_message = HumanMessage(question, id=str(uuid4()))
@@ -271,7 +304,17 @@ async def _research_turn(
         answer = answer_from_agent_state(state, turn)
         failures = check_grounding(answer, tool_results_from_messages(turn))
 
-    yield ResearchRun(answer=apply_grounding(answer, failures), messages=turn)
+    usage = summarise_usage(
+        token_counts=_token_counts(turn),
+        duration_seconds=time.perf_counter() - started,
+        price=price,
+    )
+    if usage.total_tokens == 0 and any(isinstance(m, AIMessage) for m in turn):
+        # A real model call never uses zero tokens, so the provider sent no usage. Missing
+        # usage counts as zero so the answer still goes out, but it must not pass unseen.
+        logger.warning("The model reported no token usage on thread %s; cost shows $0.", thread_id)
+    await _save_usage(agent, config, turn, usage)
+    yield ResearchRun(answer=apply_grounding(answer, failures), messages=turn, usage=usage)
 
 
 async def _stream_attempt(
@@ -290,24 +333,31 @@ async def _stream_attempt(
     `version="v2"` makes every part a dict with `type`, `ns` and `data` keys, whichever
     modes are on. (LangGraph also offers `stream_events(version="v3")`, which its docs
     now recommend, but in the installed version it is marked experimental.)
+
+    Raises:
+        RunLimitError: The model call limit was reached. LangChain's own error is turned
+            into ours here, so `services/` can catch it without importing LangChain.
     """
-    async for part in agent.astream(
-        {"messages": [message]},
-        config,
-        stream_mode=["messages", "updates"],
-        version="v2",
-    ):
-        if part["type"] == "messages":
-            chunk, metadata = part["data"]
-            if (
-                metadata.get("langgraph_node") == _MODEL_NODE
-                and isinstance(chunk, AIMessageChunk)
-                and chunk.text
-            ):
-                yield TokenEvent(text=chunk.text)
-        elif part["type"] == "updates":
-            for event in _status_events(part["data"]):
-                yield event
+    try:
+        async for part in agent.astream(
+            {"messages": [message]},
+            config,
+            stream_mode=["messages", "updates"],
+            version="v2",
+        ):
+            if part["type"] == "messages":
+                chunk, metadata = part["data"]
+                if (
+                    metadata.get("langgraph_node") == _MODEL_NODE
+                    and isinstance(chunk, AIMessageChunk)
+                    and chunk.text
+                ):
+                    yield TokenEvent(text=chunk.text)
+            elif part["type"] == "updates":
+                for event in _status_events(part["data"]):
+                    yield event
+    except ModelCallLimitExceededError as exc:
+        raise RunLimitError(str(exc)) from exc
 
 
 def _status_events(update: dict[str, Any]) -> list[StatusEvent]:
@@ -403,6 +453,53 @@ def tool_results_from_messages(messages: Sequence[BaseMessage]) -> list[ToolResu
         except ValidationError:
             continue
     return results
+
+
+def _token_counts(messages: Sequence[BaseMessage]) -> list[tuple[int, int]]:
+    """`(input_tokens, output_tokens)` for each model reply in `messages`.
+
+    The counts are the provider's own, attached to each reply as `usage_metadata`, so they
+    match the trace and the bill. A reply without them (a provider that does not report
+    usage) counts as zero rather than failing the run.
+    """
+    counts: list[tuple[int, int]] = []
+    for message in messages:
+        if isinstance(message, AIMessage) and message.usage_metadata is not None:
+            usage = message.usage_metadata
+            counts.append((usage["input_tokens"], usage["output_tokens"]))
+    return counts
+
+
+async def _save_usage(
+    agent: CompiledStateGraph,
+    config: RunnableConfig,
+    turn: Sequence[BaseMessage],
+    usage: RunUsage,
+) -> None:
+    """Save the turn's usage in the thread, on the message that confirms the answer.
+
+    It goes in that `ToolMessage`'s `artifact`: a field LangChain keeps with the message,
+    and so in the checkpoint, but never sends to the model. A reloaded conversation can
+    then show what each answer cost, and the model's context is not touched.
+
+    `aupdate_state` with a message that has an existing ID replaces that message rather
+    than adding one (the `add_messages` reducer matches on ID).
+    """
+    answer_message = _last_answer_message(turn)
+    if answer_message is None:
+        return
+    with_usage = answer_message.model_copy(
+        update={"artifact": {"usage": usage.model_dump(mode="json")}}
+    )
+    await agent.aupdate_state(config, {"messages": [with_usage]})
+
+
+def _last_answer_message(messages: Sequence[BaseMessage]) -> ToolMessage | None:
+    """The confirmation `ToolStrategy` added for the final answer tool call, if any."""
+    for message in reversed(messages):
+        if isinstance(message, ToolMessage) and message.name == _ANSWER_TOOL:
+            return message
+    return None
 
 
 def _retry_prompt(failures: Sequence[GroundingFailure]) -> str:

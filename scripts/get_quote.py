@@ -10,6 +10,7 @@ import sys
 
 from alphadesk.config.settings import get_settings
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
+from alphadesk.integrations.retry import retry_policy_from_settings
 from alphadesk.services.quotes import QuoteService
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ async def main(ticker: str) -> None:
     logging.basicConfig(level=settings.log_level, format="%(message)s")
 
     async with create_finnhub_http_client(settings) as http:
-        service = QuoteService(FinnhubClient(http))
+        service = QuoteService(FinnhubClient(http, retry_policy_from_settings(settings)))
         result = await service.get_quote(ticker)
     logger.info("%s", result.model_dump_json(indent=2))
 

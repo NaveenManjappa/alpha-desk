@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_valid
 
 from alphadesk.config.settings import Settings
 from alphadesk.domain.filings import Filing, FilingsDataError, ReportedFact
+from alphadesk.integrations.retry import RetryPolicy, call_with_retries, is_retryable_status
 
 logger = logging.getLogger(__name__)
 
@@ -146,13 +147,17 @@ def create_edgar_http_client(settings: Settings) -> httpx.AsyncClient:
 class EdgarClient:
     """Calls SEC EDGAR's JSON APIs and returns provider-neutral results."""
 
-    def __init__(self, http: httpx.AsyncClient, rate_limiter: RateLimiter) -> None:
+    def __init__(
+        self, http: httpx.AsyncClient, rate_limiter: RateLimiter, retry: RetryPolicy
+    ) -> None:
         """Args:
         http: Built by `create_edgar_http_client`, or a fake in tests.
-        rate_limiter: Shared by every request this client sends.
+        rate_limiter: Shared by every request this client sends, retries included.
+        retry: When to send a failed request again, from `retry_policy_from_settings`.
         """
         self._http = http
         self._rate_limiter = rate_limiter
+        self._retry = retry
         self._ciks: dict[str, int] | None = None  # ticker -> CIK, loaded on first use
 
     def submissions_url(self, cik: int) -> str:
@@ -283,11 +288,16 @@ class EdgarClient:
         return f"{_ARCHIVES_URL}/{cik}/{accession.replace('-', '')}/{document}"
 
     async def _get(self, url: str) -> bytes | None:
-        """GET a URL within SEC's rate limit. Returns None on 404.
+        """GET a URL within SEC's rate limit, retrying failures that may clear. None on 404.
 
         Raises:
-            FilingsDataError: On timeout, network failure or any other non-2xx status.
+            FilingsDataError: On timeout, network failure or any other non-2xx status, once
+                the retry policy allows no more attempts.
         """
+        return await call_with_retries(lambda: self._get_once(url), self._retry)
+
+    async def _get_once(self, url: str) -> bytes | None:
+        """One GET. Waits for the rate limiter first, so a retry also respects SEC's limit."""
         await self._rate_limiter.wait()
         try:
             response = await self._http.get(url)
@@ -296,10 +306,17 @@ class EdgarClient:
             response.raise_for_status()
             return response.content
         except httpx.TimeoutException as exc:
+            # Not retryable: each attempt could wait the full timeout again.
             raise FilingsDataError("SEC EDGAR did not answer in time") from exc
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             logger.warning("SEC EDGAR returned HTTP %s for %s", status, url)
-            raise FilingsDataError(f"SEC EDGAR returned HTTP {status}", status_code=status) from exc
+            raise FilingsDataError(
+                f"SEC EDGAR returned HTTP {status}",
+                status_code=status,
+                retryable=is_retryable_status(status),
+            ) from exc
         except httpx.RequestError as exc:
-            raise FilingsDataError(f"Could not reach SEC EDGAR: {type(exc).__name__}") from exc
+            raise FilingsDataError(
+                f"Could not reach SEC EDGAR: {type(exc).__name__}", retryable=True
+            ) from exc

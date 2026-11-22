@@ -4,7 +4,8 @@ import pytest
 from langchain_openai import ChatOpenAI
 
 from alphadesk.config.settings import Settings
-from alphadesk.integrations.llm import ModelTier, get_chat_model
+from alphadesk.domain.usage import ModelPrice
+from alphadesk.integrations.llm import ModelTier, get_chat_model, get_model_price
 
 
 def _openai_settings() -> Settings:
@@ -63,3 +64,34 @@ def test_openai_provider_uses_openai_default_endpoint() -> None:
 
     assert isinstance(model, ChatOpenAI)
     assert model.openai_api_base is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "settings", [_openai_settings(), _azure_settings()], ids=["openai", "azure"]
+)
+def test_streamed_calls_report_token_usage_on_both_providers(settings: Settings) -> None:
+    # LangChain turns this on by itself only for OpenAI's own URL, not for Azure's.
+    model = get_chat_model("small", settings)
+
+    assert isinstance(model, ChatOpenAI)
+    assert model.stream_usage is True
+
+
+@pytest.mark.unit
+def test_each_tier_has_its_own_price_from_settings() -> None:
+    settings = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        openai_api_key="test-key",  # pyright: ignore[reportArgumentType]
+        llm_price_small_input_per_million=0.25,
+        llm_price_small_output_per_million=2.0,
+        llm_price_large_input_per_million=1.25,
+        llm_price_large_output_per_million=10.0,
+    )
+
+    assert get_model_price("small", settings) == ModelPrice(
+        input_usd_per_million=0.25, output_usd_per_million=2.0
+    )
+    assert get_model_price("large", settings) == ModelPrice(
+        input_usd_per_million=1.25, output_usd_per_million=10.0
+    )

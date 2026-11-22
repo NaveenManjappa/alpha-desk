@@ -34,12 +34,18 @@ class QuoteSource(Protocol):
         ...
 
 
+# HTTP statuses that mean the provider refused our key. Retrying will not help.
+_KEY_REJECTED = {401, 403}
+
+
 class QuoteService:
     """Gets share prices. Never raises for an expected failure; returns a `ToolError`."""
 
-    def __init__(self, source: QuoteSource) -> None:
+    def __init__(self, source: QuoteSource | None) -> None:
         """Args:
-        source: The market data client, passed in so tests can supply a fake.
+        source: The market data client, passed in so tests can supply a fake. None when
+            no market data key is configured: every price question then gets an
+            "unavailable" error, and the rest of the app works as normal.
         """
         self._source = source
 
@@ -52,18 +58,19 @@ class QuoteService:
         symbol = normalise_ticker(ticker)
         if symbol is None:
             return invalid_ticker_error(ticker)
+        if self._source is None:
+            return ToolError(
+                error_type="unavailable",
+                message="Share prices are not available: the price service is not set up.",
+                as_of=datetime.now(UTC),
+            )
 
         source_url = self._source.quote_url(symbol)
         try:
             quote = await self._source.get_quote(symbol)
         except MarketDataError as exc:
             logger.warning("Quote for %s failed: %s", symbol, exc)
-            return ToolError(
-                error_type="upstream_error",
-                message=f"The price service failed for {symbol}. Try again later.",
-                source_url=source_url,
-                as_of=datetime.now(UTC),
-            )
+            return _quote_failed(symbol, source_url, exc)
         as_of = datetime.now(UTC)
 
         if quote is None:
@@ -82,3 +89,20 @@ class QuoteService:
             source_url=source_url,
             as_of=as_of,
         )
+
+
+def _quote_failed(symbol: str, source_url: str, error: MarketDataError) -> ToolError:
+    """The error to hand the model when the provider failed, after any retries."""
+    if error.status_code in _KEY_REJECTED:
+        return ToolError(
+            error_type="unavailable",
+            message="Share prices are not available: the price service refused our API key.",
+            source_url=source_url,
+            as_of=datetime.now(UTC),
+        )
+    return ToolError(
+        error_type="upstream_error",
+        message=f"The price service failed for {symbol}. Try again later.",
+        source_url=source_url,
+        as_of=datetime.now(UTC),
+    )

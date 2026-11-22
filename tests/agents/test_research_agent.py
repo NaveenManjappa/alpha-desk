@@ -25,6 +25,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from pydantic import Field
 
 from alphadesk.agents.research_agent import (
+    ResearchRun,
     answer_from_agent_state,
     ask_research_agent,
     create_research_agent,
@@ -33,9 +34,12 @@ from alphadesk.agents.research_agent import (
 )
 from alphadesk.domain.answer import DISCLAIMER, Answer, AnswerDraft, NoAnswerError
 from alphadesk.domain.chat_events import FinalEvent, StatusEvent, TokenEvent
+from alphadesk.domain.errors import RunLimitError
+from alphadesk.domain.usage import ModelPrice, RunUsage
 from alphadesk.graph.checkpointer import create_checkpointer
 from alphadesk.graph.history import count_history_tokens
 from alphadesk.integrations.finnhub import FinnhubClient
+from alphadesk.integrations.retry import RetryPolicy
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter
 from alphadesk.services.filings import FilingsService
 from alphadesk.services.financials import FinancialFactsService
@@ -84,8 +88,14 @@ class ScriptedChatModel(GenericFakeChatModel):
             )
             for index, call in enumerate(reply.tool_calls)
         ]
+        # Providers report token usage once, on the last chunk.
         yield ChatGenerationChunk(
-            message=AIMessageChunk(content="", id=reply.id, tool_call_chunks=tool_call_chunks)
+            message=AIMessageChunk(
+                content="",
+                id=reply.id,
+                tool_call_chunks=tool_call_chunks,
+                usage_metadata=reply.usage_metadata,
+            )
         )
 
 
@@ -100,34 +110,50 @@ def _quote_service() -> QuoteService:
         base_url="https://finnhub.io/api/v1",
         transport=httpx.MockTransport(lambda _: apple),
     )
-    return QuoteService(FinnhubClient(http))
+    return QuoteService(FinnhubClient(http, NO_RETRIES))
 
 
 # Large enough that no test trims unless it sets its own, smaller budget.
 NO_TRIMMING = 1_000_000
+# Enough model calls for every scripted conversation here, unless a test sets its own.
+MAX_MODEL_CALLS = 10
+NO_RETRIES = RetryPolicy(max_attempts=1)
+# USD per million tokens. Round numbers, so expected costs are easy to work out by hand.
+PRICE = ModelPrice(input_usd_per_million=1.0, output_usd_per_million=10.0)
 
 
 def _agent(
     model: ScriptedChatModel,
     checkpointer: BaseCheckpointSaver | None = None,
     history_max_tokens: int = NO_TRIMMING,
+    max_model_calls: int = MAX_MODEL_CALLS,
 ) -> Any:
     """The agent with all three tools. EDGAR is never reached in these tests: it answers 503."""
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
-    edgar = EdgarClient(http, RateLimiter(max_per_second=1000))
+    edgar = EdgarClient(http, RateLimiter(max_per_second=1000), NO_RETRIES)
     return create_research_agent(
         model,
         quote_service=_quote_service(),
         financial_facts_service=FinancialFactsService(edgar),
         filings_service=FilingsService(edgar),
         history_max_tokens=history_max_tokens,
+        max_model_calls=max_model_calls,
         checkpointer=checkpointer,
     )
 
 
-def _chat_agent(model: ScriptedChatModel, history_max_tokens: int = NO_TRIMMING) -> Any:
+def _chat_agent(
+    model: ScriptedChatModel,
+    history_max_tokens: int = NO_TRIMMING,
+    max_model_calls: int = MAX_MODEL_CALLS,
+) -> Any:
     """The agent with a checkpointer, as `ask_research_agent` needs it."""
-    return _agent(model, create_checkpointer(), history_max_tokens)
+    return _agent(model, create_checkpointer(), history_max_tokens, max_model_calls)
+
+
+async def _run(agent: Any, question: str, thread_id: str) -> ResearchRun:
+    """`ask_research_agent` with the test price filled in."""
+    return await ask_research_agent(agent, question, thread_id, price=PRICE)
 
 
 def _ask(question: str) -> dict[str, Any]:
@@ -313,7 +339,7 @@ ANSWER_WITH_INVENTED_CHANGE = _answer_call(
 async def test_grounded_answer_is_verified_without_a_retry() -> None:
     model = _model(ASK_FOR_QUOTE, APPLE_ANSWER)
 
-    run = await ask_research_agent(_chat_agent(model), "What is Apple's share price?", "t1")
+    run = await _run(_chat_agent(model), "What is Apple's share price?", "t1")
 
     assert run.answer.verified is True
     assert [figure.value for figure in run.answer.key_figures] == [227.5]
@@ -325,7 +351,7 @@ async def test_grounded_answer_is_verified_without_a_retry() -> None:
 async def test_failed_figure_is_sent_back_once_and_the_fixed_answer_is_verified() -> None:
     model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, APPLE_ANSWER)
 
-    run = await ask_research_agent(_chat_agent(model), "What is Apple's share price?", "t1")
+    run = await _run(_chat_agent(model), "What is Apple's share price?", "t1")
 
     # The retry turn told the model which figure failed and why.
     feedback = model.calls[2][-1]
@@ -344,7 +370,7 @@ async def test_figure_that_fails_twice_is_removed_and_answer_unverified() -> Non
     )
     model = _model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, second_try)
 
-    run = await ask_research_agent(_chat_agent(model), "What is Apple's share price?", "t1")
+    run = await _run(_chat_agent(model), "What is Apple's share price?", "t1")
 
     assert len(model.calls) == 3  # one retry, no more
     assert run.answer.verified is False
@@ -384,8 +410,8 @@ async def test_follow_up_on_the_same_thread_sees_the_earlier_turn() -> None:
     model = _model(_quote_call("q1"), _apple_answer("a1"), _quote_call("q2"), _apple_answer("a2"))
     agent = _chat_agent(model)
 
-    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
-    await ask_research_agent(agent, "And its price again?", thread_id="apple")
+    await _run(agent, "How is Apple doing?", thread_id="apple")
+    await _run(agent, "And its price again?", thread_id="apple")
 
     # The model's first call of turn two (call index 2) includes turn one's question.
     second_turn = _texts(model.calls[2])
@@ -399,8 +425,8 @@ async def test_a_new_thread_starts_with_no_memory() -> None:
     model = _model(_quote_call("q1"), _apple_answer("a1"), FOUR)
     agent = _chat_agent(model)
 
-    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
-    await ask_research_agent(agent, "What is 2 plus 2?", thread_id="other")
+    await _run(agent, "How is Apple doing?", thread_id="apple")
+    await _run(agent, "What is 2 plus 2?", thread_id="other")
 
     other_thread = _texts(model.calls[2])
     assert "How is Apple doing?" not in other_thread
@@ -412,7 +438,7 @@ async def test_a_new_thread_starts_with_no_memory() -> None:
 async def test_saved_state_for_a_thread_can_be_read_back() -> None:
     agent = _chat_agent(_model(_quote_call("q1"), _apple_answer("a1")))
 
-    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    await _run(agent, "How is Apple doing?", thread_id="apple")
     snapshot = await agent.aget_state({"configurable": {"thread_id": "apple"}})
 
     messages = snapshot.values["messages"]
@@ -435,8 +461,8 @@ async def test_run_messages_hold_only_this_turn() -> None:
     model = _model(_quote_call("q1"), _apple_answer("a1"), _quote_call("q2"), _apple_answer("a2"))
     agent = _chat_agent(model)
 
-    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
-    run = await ask_research_agent(agent, "And its price again?", thread_id="apple")
+    await _run(agent, "How is Apple doing?", thread_id="apple")
+    run = await _run(agent, "And its price again?", thread_id="apple")
 
     assert run.messages[0].text == "And its price again?"
     assert len(run.messages) == 5
@@ -449,8 +475,8 @@ async def test_data_from_an_earlier_turn_does_not_ground_a_new_answer() -> None:
     model = _model(_quote_call("q1"), _apple_answer("a1"), _apple_answer("a2"), _apple_answer("a3"))
     agent = _chat_agent(model)
 
-    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
-    run = await ask_research_agent(agent, "And its price again?", thread_id="apple")
+    await _run(agent, "How is Apple doing?", thread_id="apple")
+    run = await _run(agent, "And its price again?", thread_id="apple")
 
     assert run.answer.verified is False
     assert run.answer.key_figures == []
@@ -462,17 +488,17 @@ async def test_a_turn_without_an_answer_never_returns_the_previous_answer() -> N
     model = _model(_quote_call("q1"), _apple_answer("a1"), AIMessage("I can't help with that."))
     agent = _chat_agent(model)
 
-    await ask_research_agent(agent, "How is Apple doing?", thread_id="apple")
+    await _run(agent, "How is Apple doing?", thread_id="apple")
 
     with pytest.raises(NoAnswerError):
-        await ask_research_agent(agent, "Tell me a secret.", thread_id="apple")
+        await _run(agent, "Tell me a secret.", thread_id="apple")
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_asking_an_agent_without_a_checkpointer_is_refused() -> None:
     with pytest.raises(ValueError, match="checkpointer"):
-        await ask_research_agent(_agent(_model(FOUR)), "What is 2 plus 2?", thread_id="t1")
+        await _run(_agent(_model(FOUR)), "What is 2 plus 2?", thread_id="t1")
 
 
 @pytest.mark.unit
@@ -487,7 +513,7 @@ async def test_a_long_chat_sends_the_model_no_more_than_the_history_budget() -> 
     agent = _chat_agent(model, history_max_tokens=budget)
 
     for turn in range(turns):
-        await ask_research_agent(agent, f"Question {turn}: how is Apple?", thread_id="long")
+        await _run(agent, f"Question {turn}: how is Apple?", thread_id="long")
 
     for sent in model.calls:
         system, history = sent[0], sent[1:]
@@ -506,7 +532,7 @@ async def test_a_long_chat_sends_the_model_no_more_than_the_history_budget() -> 
 
 
 async def _stream(agent: Any, question: str, thread_id: str = "t1") -> list[Any]:
-    return [event async for event in stream_research_agent(agent, question, thread_id)]
+    return [event async for event in stream_research_agent(agent, question, thread_id, price=PRICE)]
 
 
 @pytest.mark.unit
@@ -578,3 +604,162 @@ async def test_stream_without_an_answer_raises_after_its_progress() -> None:
 
     with pytest.raises(NoAnswerError):
         await _stream(_chat_agent(_model(refusal)), "Tell me a secret.")
+
+
+# --- Limits and usage (Slice 12) --------------------------------------------------------
+
+
+def _with_usage(message: AIMessage, input_tokens: int, output_tokens: int) -> AIMessage:
+    """A scripted reply that reports its token usage, as a real provider does."""
+    usage = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+    return message.model_copy(update={"usage_metadata": usage})
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_usage_adds_up_every_model_call_of_the_turn() -> None:
+    model = _model(_with_usage(ASK_FOR_QUOTE, 1_000, 50), _with_usage(APPLE_ANSWER, 2_000, 100))
+
+    run = await _run(_chat_agent(model), "Apple price?", "t1")
+
+    assert run.usage.input_tokens == 3_000
+    assert run.usage.output_tokens == 150
+    assert run.usage.total_tokens == 3_150
+    # 3,000 / 1M * $1 + 150 / 1M * $10 = $0.003 + $0.0015
+    assert run.usage.estimated_cost_usd == pytest.approx(0.0045)
+    assert run.usage.duration_seconds > 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_usage_covers_both_attempts_when_grounding_retries() -> None:
+    model = _model(
+        _with_usage(ASK_FOR_QUOTE, 100, 10),
+        _with_usage(ANSWER_WITH_INVENTED_CHANGE, 200, 20),
+        _with_usage(APPLE_ANSWER, 300, 30),
+    )
+
+    run = await _run(_chat_agent(model), "Apple price?", "t1")
+
+    assert (run.usage.input_tokens, run.usage.output_tokens) == (600, 60)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_usage_counts_only_this_turn_not_earlier_ones() -> None:
+    model = _model(
+        _with_usage(_quote_call("q1"), 1_000, 10),
+        _with_usage(_apple_answer("a1"), 1_000, 10),
+        _with_usage(FOUR, 500, 5),
+    )
+    agent = _chat_agent(model)
+
+    await _run(agent, "How is Apple doing?", "apple")
+    run = await _run(agent, "What is 2 plus 2?", "apple")
+
+    assert (run.usage.input_tokens, run.usage.output_tokens) == (500, 5)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_final_event_carries_usage_beside_the_answer() -> None:
+    model = _model(_with_usage(ASK_FOR_QUOTE, 100, 10), _with_usage(APPLE_ANSWER, 200, 20))
+
+    events = await _stream(_chat_agent(model), "Apple price?")
+
+    final = events[-1]
+    assert isinstance(final, FinalEvent)
+    assert final.usage.total_tokens == 330
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_usage_is_saved_with_the_answer_in_the_thread() -> None:
+    model = _model(_with_usage(ASK_FOR_QUOTE, 100, 10), _with_usage(APPLE_ANSWER, 200, 20), FOUR)
+    agent = _chat_agent(model)
+
+    run = await _run(agent, "Apple price?", "apple")
+    snapshot = await agent.aget_state({"configurable": {"thread_id": "apple"}})
+
+    # The answer tool's confirmation holds it, in `artifact`: saved, but never sent to the model.
+    answer_message = snapshot.values["messages"][-1]
+    assert isinstance(answer_message, ToolMessage)
+    assert answer_message.name == "AnswerDraft"
+    assert RunUsage.model_validate(answer_message.artifact["usage"]) == run.usage
+    # Saving it did not leave the thread half-run: the next question works as normal.
+    assert snapshot.next == ()
+    follow_up = await _run(agent, "What is 2 plus 2?", "apple")
+    assert follow_up.answer.summary == "Two plus two is four."
+    # The model was sent the earlier turn, but not its usage.
+    assert "Apple price?" in _texts(model.calls[-1])
+    assert not any("estimated_cost_usd" in str(m.content) for m in model.calls[-1])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_looping_agent_is_stopped_at_the_model_call_limit() -> None:
+    # A model that never stops asking for the price.
+    looping = [_quote_call(f"q{n}") for n in range(10)]
+    model = _model(*looping)
+
+    with pytest.raises(RunLimitError):
+        await _run(_chat_agent(model, max_model_calls=3), "Apple price?", "loop")
+
+    assert len(model.calls) == 3
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_thread_stopped_at_the_limit_can_still_be_used() -> None:
+    model = _model(_quote_call("q1"), _quote_call("q2"), FOUR)
+    agent = _chat_agent(model, max_model_calls=2)
+
+    with pytest.raises(RunLimitError):
+        await _run(agent, "Apple price?", "loop")
+    run = await _run(agent, "What is 2 plus 2?", "loop")
+
+    assert run.answer.summary == "Two plus two is four."
+    # Every tool call in the saved thread has its result, so the provider would accept it.
+    sent = model.calls[-1]
+    call_ids = {call["id"] for m in sent if isinstance(m, AIMessage) for call in m.tool_calls}
+    result_ids = {m.tool_call_id for m in sent if isinstance(m, ToolMessage)}
+    assert call_ids == result_ids
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_the_limit_is_per_run_not_per_thread() -> None:
+    # Two questions of two model calls each, with a limit of three: each run starts at zero.
+    model = _model(_quote_call("q1"), _apple_answer("a1"), _quote_call("q2"), _apple_answer("a2"))
+    agent = _chat_agent(model, max_model_calls=3)
+
+    await _run(agent, "How is Apple doing?", "apple")
+    run = await _run(agent, "And now?", "apple")
+
+    assert run.answer.verified is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_model_calls_with_no_reported_usage_log_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The scripted replies carry no usage, as a provider would with stream usage off.
+    run = await _run(_chat_agent(_model(ASK_FOR_QUOTE, APPLE_ANSWER)), "Apple price?", "t1")
+
+    assert run.usage.total_tokens == 0
+    assert any("no token usage" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_reported_usage_logs_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    model = _model(_with_usage(ASK_FOR_QUOTE, 100, 10), _with_usage(APPLE_ANSWER, 200, 20))
+
+    await _run(_chat_agent(model), "Apple price?", "t1")
+
+    assert not any("no token usage" in record.getMessage() for record in caplog.records)

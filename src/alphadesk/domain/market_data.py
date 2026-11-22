@@ -7,6 +7,8 @@ a new client, not editing the service.
 
 from pydantic import AwareDatetime, BaseModel
 
+from alphadesk.domain.errors import UpstreamError
+
 
 class MarketQuote(BaseModel):
     """A provider's latest quote for one symbol, already in our units.
@@ -22,16 +24,9 @@ class MarketQuote(BaseModel):
     quote_time: AwareDatetime
 
 
-class MarketDataError(Exception):
+class MarketDataError(UpstreamError):
     """A market data provider could not answer: timeout, network error, bad status or bad body.
 
     "The symbol does not exist" is not this error; clients report that as a missing quote.
-
-    Attributes:
-        status_code: The HTTP status, if a response arrived. Slice 12 uses it to decide
-            which failures are worth retrying.
+    `status_code` and `retryable` come from `UpstreamError`.
     """
-
-    def __init__(self, message: str, status_code: int | None = None) -> None:
-        super().__init__(message)
-        self.status_code = status_code

@@ -8,6 +8,7 @@ import pytest
 
 from alphadesk.config.settings import Settings
 from alphadesk.domain.filings import FilingsDataError
+from alphadesk.integrations.retry import RetryPolicy
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter, create_edgar_http_client
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -62,9 +63,13 @@ COMPANY_FACTS = {
 }
 
 
+# Three attempts with no wait between them, so retry tests run instantly.
+RETRY_NOW = RetryPolicy(max_attempts=3, base_delay_seconds=0)
+
+
 def _client(handler: Handler, limiter: RateLimiter | None = None) -> EdgarClient:
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return EdgarClient(http, limiter or RateLimiter(max_per_second=1000))
+    return EdgarClient(http, limiter or RateLimiter(max_per_second=1000), RETRY_NOW)
 
 
 @pytest.mark.unit
@@ -269,3 +274,69 @@ def test_http_client_requires_a_user_agent() -> None:
 
     with pytest.raises(ValueError, match="ALPHADESK_SEC_EDGAR_USER_AGENT"):
         create_edgar_http_client(settings)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_server_errors_then_success_takes_three_attempts() -> None:
+    responses = [httpx.Response(500), httpx.Response(503), httpx.Response(200, json=SUBMISSIONS)]
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return responses.pop(0)
+
+    filings = await _client(handler).get_recent_filings(1045810)
+
+    assert filings is not None
+    assert len(requests) == 3
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_timeout_is_not_retried() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        raise httpx.ReadTimeout("too slow", request=request)
+
+    with pytest.raises(FilingsDataError, match="in time"):
+        await _client(handler).get_recent_filings(1045810)
+
+    assert len(requests) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_forbidden_is_not_retried() -> None:
+    # SEC answers 403 to a User-Agent it will not serve. Asking again will not change that.
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(403)
+
+    with pytest.raises(FilingsDataError) as caught:
+        await _client(handler).get_recent_filings(1045810)
+
+    assert caught.value.retryable is False
+    assert len(requests) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_each_retry_waits_for_the_rate_limiter_again() -> None:
+    # A retry is a new request, so it must respect SEC's rate limit like any other.
+    class CountingLimiter(RateLimiter):
+        waits = 0
+
+        async def wait(self) -> None:
+            self.waits += 1
+
+    responses = [httpx.Response(503), httpx.Response(200, json=SUBMISSIONS)]
+    limiter = CountingLimiter(max_per_second=1)
+
+    await _client(lambda _: responses.pop(0), limiter).get_recent_filings(1045810)
+
+    assert limiter.waits == 2

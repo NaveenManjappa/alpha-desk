@@ -14,7 +14,14 @@ from alphadesk.domain.chat_events import (
     StatusEvent,
     TokenEvent,
 )
-from alphadesk.services.chat import FAILED_MESSAGE, NO_ANSWER_MESSAGE, ChatService
+from alphadesk.domain.errors import RunLimitError
+from alphadesk.domain.usage import RunUsage
+from alphadesk.services.chat import (
+    FAILED_MESSAGE,
+    NO_ANSWER_MESSAGE,
+    RUN_LIMIT_MESSAGE,
+    ChatService,
+)
 
 ANSWER = Answer(
     summary="Apple's shares are up slightly today.",
@@ -25,7 +32,14 @@ ANSWER = Answer(
     disclaimer=DISCLAIMER,
 )
 STATUS = StatusEvent(tool="get_quote", message="Getting the latest share price")
-FINAL = FinalEvent(answer=ANSWER)
+USAGE = RunUsage(
+    duration_seconds=4.2,
+    input_tokens=3_000,
+    output_tokens=180,
+    total_tokens=3_180,
+    estimated_cost_usd=0.00111,
+)
+FINAL = FinalEvent(answer=ANSWER, usage=USAGE)
 
 
 class FakeAnswerStream:
@@ -112,3 +126,30 @@ async def test_nothing_is_sent_after_the_final_event() -> None:
     events = await _collect(ChatService(FakeAnswerStream([FINAL, late])))
 
     assert events == [FINAL]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_step_limit_ends_with_a_friendly_error() -> None:
+    stream = FakeAnswerStream([STATUS], error=RunLimitError("8 model calls"))
+
+    events = await _collect(ChatService(stream))
+
+    assert events == [STATUS, ErrorEvent(message=RUN_LIMIT_MESSAGE)]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_finished_run_logs_one_line_with_tokens_and_cost(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+
+    await _collect(ChatService(FakeAnswerStream([STATUS, FINAL])))
+
+    finished = [r.getMessage() for r in caplog.records if "finished" in r.getMessage()]
+    assert len(finished) == 1
+    assert "3000 input" in finished[0]
+    assert "180 output" in finished[0]
+    assert "$0.0011" in finished[0]
+    assert "4.2" in finished[0]

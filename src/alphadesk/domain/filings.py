@@ -8,6 +8,8 @@ from datetime import date
 
 from pydantic import BaseModel
 
+from alphadesk.domain.errors import UpstreamError
+
 
 class ReportedFact(BaseModel):
     """One figure exactly as a company reported it in one filing, before we choose which to use.
@@ -52,16 +54,9 @@ class Filing(BaseModel):
     url: str
 
 
-class FilingsDataError(Exception):
+class FilingsDataError(UpstreamError):
     """A filings provider could not answer: timeout, network error, bad status or bad body.
 
     "No such company" is not this error; clients report that as a missing result.
-
-    Attributes:
-        status_code: The HTTP status, if a response arrived. Slice 12 uses it to decide
-            which failures are worth retrying.
+    `status_code` and `retryable` come from `UpstreamError`.
     """
-
-    def __init__(self, message: str, status_code: int | None = None) -> None:
-        super().__init__(message)
-        self.status_code = status_code

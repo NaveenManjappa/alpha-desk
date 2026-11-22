@@ -19,6 +19,7 @@ from alphadesk.api.app import create_app
 from alphadesk.api.dependencies import AppServices, get_services
 from alphadesk.domain.answer import DISCLAIMER, Answer
 from alphadesk.domain.chat_events import FinalEvent, ProgressEvent, StatusEvent
+from alphadesk.domain.usage import RunUsage
 from alphadesk.services.chat import ChatService
 from alphadesk.services.health import PostgresCheck
 
@@ -29,6 +30,13 @@ ANSWER = Answer(
     as_of=datetime(2025, 11, 12, 16, 20, tzinfo=UTC),
     verified=True,
     disclaimer=DISCLAIMER,
+)
+USAGE = RunUsage(
+    duration_seconds=4.2,
+    input_tokens=3_000,
+    output_tokens=180,
+    total_tokens=3_180,
+    estimated_cost_usd=0.00111,
 )
 
 
@@ -43,7 +51,7 @@ class RecordingAnswerStream:
     ) -> AsyncIterator[ProgressEvent | FinalEvent]:
         self.calls.append((message, thread_id))
         yield StatusEvent(tool="get_quote", message="Getting the latest share price")
-        yield FinalEvent(answer=ANSWER)
+        yield FinalEvent(answer=ANSWER, usage=USAGE)
 
 
 def _client(
@@ -85,6 +93,9 @@ def test_chat_streams_status_then_final_as_server_sent_events(client: TestClient
     final = events[1][1]
     assert final["type"] == "final"
     assert Answer.model_validate(final["answer"]) == ANSWER
+    # Usage sits beside the answer, not inside it: it describes the run, not the research.
+    assert RunUsage.model_validate(final["usage"]) == USAGE
+    assert "usage" not in Answer.model_fields
 
 
 @pytest.mark.unit

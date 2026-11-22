@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from alphadesk.config.settings import Settings
 from alphadesk.domain.market_data import MarketDataError, MarketQuote
+from alphadesk.integrations.retry import RetryPolicy, call_with_retries, is_retryable_status
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,10 @@ def create_finnhub_http_client(settings: Settings) -> httpx.AsyncClient:
     `async with create_finnhub_http_client(settings) as http: ...`
 
     Raises:
-        ValueError: If ALPHADESK_FINNHUB_API_KEY is not set.
+        ValueError: If ALPHADESK_FINNHUB_API_KEY is not set, or set to an empty value.
     """
-    if settings.finnhub_api_key is None:
+    # A SecretStr is falsy when empty, so this catches `ALPHADESK_FINNHUB_API_KEY=` too.
+    if not settings.finnhub_api_key:
         raise ValueError("ALPHADESK_FINNHUB_API_KEY is missing. Set it in the environment or .env.")
     return httpx.AsyncClient(
         base_url=settings.finnhub_base_url,
@@ -52,9 +54,13 @@ def create_finnhub_http_client(settings: Settings) -> httpx.AsyncClient:
 class FinnhubClient:
     """Calls Finnhub endpoints and returns provider-neutral results."""
 
-    def __init__(self, http: httpx.AsyncClient) -> None:
-        """Wrap an HTTP client built by `create_finnhub_http_client` (or a fake in tests)."""
+    def __init__(self, http: httpx.AsyncClient, retry: RetryPolicy) -> None:
+        """Args:
+        http: Built by `create_finnhub_http_client`, or a fake in tests.
+        retry: When to send a failed request again, from `retry_policy_from_settings`.
+        """
         self._http = http
+        self._retry = retry
 
     def quote_url(self, symbol: str) -> str:
         """The `/quote` URL for a symbol. Safe to show: the key is sent as a header."""
@@ -67,9 +73,11 @@ class FinnhubClient:
             The quote, or None if Finnhub has no such symbol.
 
         Raises:
-            MarketDataError: On timeout, network failure, a non-2xx status or an unexpected body.
+            MarketDataError: On timeout, network failure, a non-2xx status or an unexpected
+                body. Rate limits, server errors, timeouts and network failures are retried
+                first, as the retry policy allows.
         """
-        raw = await self._fetch_quote(symbol)
+        raw = await call_with_retries(lambda: self._fetch_quote(symbol), self._retry)
         # Finnhub's way of saying "unknown symbol": a zero timestamp and no change.
         if raw.timestamp == 0 or raw.change is None:
             return None
@@ -80,17 +88,27 @@ class FinnhubClient:
         )
 
     async def _fetch_quote(self, symbol: str) -> _FinnhubQuote:
-        """Call `/quote` and validate the body, turning every failure into MarketDataError."""
+        """One call to `/quote`, with the body validated. Every failure becomes a
+        MarketDataError that says whether sending the request again could help."""
         try:
             response = await self._http.get("/quote", params={"symbol": symbol})
             response.raise_for_status()
             return _FinnhubQuote.model_validate_json(response.content)
         except httpx.TimeoutException as exc:
+            # Not retryable: each attempt could wait the full timeout again, so a slow
+            # provider would hold the user for several timeouts instead of one.
             raise MarketDataError("Finnhub did not answer in time") from exc
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            raise MarketDataError(f"Finnhub returned HTTP {status}", status_code=status) from exc
+            raise MarketDataError(
+                f"Finnhub returned HTTP {status}",
+                status_code=status,
+                retryable=is_retryable_status(status),
+            ) from exc
         except httpx.RequestError as exc:
-            raise MarketDataError(f"Could not reach Finnhub: {type(exc).__name__}") from exc
+            raise MarketDataError(
+                f"Could not reach Finnhub: {type(exc).__name__}", retryable=True
+            ) from exc
         except ValidationError as exc:
+            # Not retryable: the same request would get the same body back.
             raise MarketDataError("Finnhub sent a response in an unexpected shape") from exc

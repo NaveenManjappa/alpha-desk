@@ -9,6 +9,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 
+from alphadesk.integrations.retry import RetryPolicy
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter
 from alphadesk.services.filings import FilingsService
 from alphadesk.services.financials import FinancialFactsService
@@ -62,7 +63,7 @@ def _edgar(data_response: httpx.Response) -> EdgarClient:
         return data_response
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return EdgarClient(http, RateLimiter(max_per_second=1000))
+    return EdgarClient(http, RateLimiter(max_per_second=1000), RetryPolicy(max_attempts=1))
 
 
 def _facts_tool(response: httpx.Response) -> BaseTool:

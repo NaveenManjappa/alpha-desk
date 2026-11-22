@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     # (about four characters each). Older turns beyond it are left out of the call but
     # stay in the checkpoint. The system prompt and tool schemas are not counted.
     history_max_tokens: int = Field(default=16_000, gt=0)
+    # The most model calls one run may make before it is stopped (Slice 12). A price
+    # question takes two (ask for data, then answer); a run that fetches from every tool
+    # one after another, then fixes a malformed answer, takes about five. The limit is
+    # per run, and a grounding retry is a second run.
+    agent_max_model_calls: int = Field(default=8, ge=2)
+
+    # Estimated cost per run (Slice 12): each tier's price in US dollars per million
+    # tokens. Prices change: check the provider's pricing page and keep these current.
+    # The defaults are OpenAI's list prices for gpt-5-mini, the default model.
+    llm_price_small_input_per_million: float = Field(default=0.25, ge=0)
+    llm_price_small_output_per_million: float = Field(default=2.00, ge=0)
+    llm_price_large_input_per_million: float = Field(default=0.25, ge=0)
+    llm_price_large_output_per_million: float = Field(default=2.00, ge=0)
 
     # OpenAI. Model names per tier; both tiers may point at the same model.
     openai_api_key: SecretStr | None = None
@@ -56,6 +69,14 @@ class Settings(BaseSettings):
     langsmith_project: str = "alphadesk-dev"
     # Only needed outside LangSmith's US region, e.g. https://eu.api.smith.langchain.com
     langsmith_endpoint: str | None = None
+
+    # --- Retries for the data providers (Finnhub, SEC EDGAR) ---
+    # Rate limits, server errors and dropped connections are tried again, up to this many
+    # attempts in total. Timeouts, bad requests and rejected keys never are. The model has
+    # its own retries: llm_max_retries.
+    http_max_attempts: int = Field(default=3, ge=1, le=5)
+    # Wait after the first failure; it doubles after each one after that.
+    http_retry_base_delay_seconds: float = Field(default=0.5, ge=0)
 
     # --- Market data: Finnhub (ADR 007) ---
     # Optional at startup: only the quote tool needs it, and it reports a missing key itself.

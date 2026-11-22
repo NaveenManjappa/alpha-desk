@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from alphadesk.domain.answer import Answer
+from alphadesk.domain.usage import RunUsage
 
 
 class StatusEvent(BaseModel):
@@ -45,10 +46,17 @@ class TokenEvent(BaseModel):
 
 
 class FinalEvent(BaseModel):
-    """The finished answer, after the grounding check. Always the last event of a run."""
+    """The finished answer, after the grounding check. Always the last event of a run.
+
+    Attributes:
+        answer: The research itself.
+        usage: What the run took: time, tokens and estimated cost. Beside the answer, not
+            inside it, because it describes the run, not the company.
+    """
 
     type: Literal["final"] = "final"
     answer: Answer
+    usage: RunUsage
 
 
 class ErrorEvent(BaseModel):

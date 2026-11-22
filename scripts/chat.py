@@ -35,9 +35,12 @@ from alphadesk.agents.research_agent import (
     create_research_agent,
 )
 from alphadesk.config.settings import get_settings
+from alphadesk.domain.errors import RunLimitError
+from alphadesk.domain.usage import ModelPrice
 from alphadesk.graph.checkpointer import open_checkpointer
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
-from alphadesk.integrations.llm import get_chat_model
+from alphadesk.integrations.llm import get_chat_model, get_model_price
+from alphadesk.integrations.retry import retry_policy_from_settings
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter, create_edgar_http_client
 from alphadesk.integrations.tracing import configure_tracing
 from alphadesk.services.filings import FilingsService
@@ -68,16 +71,17 @@ def _describe(message: BaseMessage) -> str:
     return f"{message.type:<6} -> {message.text}"
 
 
-async def _ask(agent: CompiledStateGraph, question: str, thread_id: str) -> None:
-    """Ask one question on the thread, log this turn's steps, then the Answer."""
+async def _ask(agent: CompiledStateGraph, question: str, thread_id: str, price: ModelPrice) -> None:
+    """Ask one question on the thread, log this turn's steps, the Answer, then its usage."""
     try:
-        run = await ask_research_agent(agent, question, thread_id)
-    except NoAnswerError as error:
+        run = await ask_research_agent(agent, question, thread_id, price=price)
+    except (NoAnswerError, RunLimitError) as error:
         logger.warning("No answer: %s", error)
         return
     for message in run.messages:
         logger.info("%s", _describe(message))
     logger.info("\n%s\n", run.answer.model_dump_json(indent=2))
+    logger.info("usage: %s", run.usage.model_dump_json())
 
 
 async def _show_state(agent: CompiledStateGraph, thread_id: str) -> None:
@@ -126,7 +130,7 @@ async def _show_history(agent: CompiledStateGraph, thread_id: str) -> None:
         logger.info("Thread %s has no checkpoints yet.", thread_id)
 
 
-async def _chat(agent: CompiledStateGraph, thread_id: str) -> None:
+async def _chat(agent: CompiledStateGraph, thread_id: str, price: ModelPrice) -> None:
     """Read lines until /quit or end of input. Each question continues the current thread."""
     logger.info("Thread %s. Ask a question, or type /state, /history, /new, /quit.", thread_id)
     while True:
@@ -153,7 +157,7 @@ async def _chat(agent: CompiledStateGraph, thread_id: str) -> None:
         elif command.startswith("/"):
             logger.info("Unknown command. Try /state, /history, /new, /thread <id>, /quit.")
         else:
-            await _ask(agent, line, thread_id)
+            await _ask(agent, line, thread_id, price)
 
 
 async def main(thread_id: str) -> None:
@@ -169,17 +173,21 @@ async def main(thread_id: str) -> None:
         open_checkpointer(settings) as checkpointer,
     ):
         logger.info("Checkpointer: %s.", settings.checkpointer)
+        retry = retry_policy_from_settings(settings)
         # One EDGAR client (and so one rate limiter) shared by both EDGAR tools.
-        edgar = EdgarClient(edgar_http, RateLimiter(settings.sec_edgar_max_requests_per_second))
+        edgar = EdgarClient(
+            edgar_http, RateLimiter(settings.sec_edgar_max_requests_per_second), retry
+        )
         agent = create_research_agent(
             model=get_chat_model("small", settings),
-            quote_service=QuoteService(FinnhubClient(finnhub_http)),
+            quote_service=QuoteService(FinnhubClient(finnhub_http, retry)),
             financial_facts_service=FinancialFactsService(edgar),
             filings_service=FilingsService(edgar),
             history_max_tokens=settings.history_max_tokens,
+            max_model_calls=settings.agent_max_model_calls,
             checkpointer=checkpointer,
         )
-        await _chat(agent, thread_id)
+        await _chat(agent, thread_id, get_model_price("small", settings))
 
 
 if __name__ == "__main__":

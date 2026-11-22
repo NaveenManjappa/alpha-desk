@@ -96,3 +96,37 @@ async def test_upstream_failure_returns_upstream_error_instead_of_raising() -> N
     assert result.error_type == "upstream_error"
     # The message is ours, not upstream's text: retrieved text is data, not instructions.
     assert "503" not in result.message
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_no_price_source_configured_returns_unavailable_error() -> None:
+    # The app runs without a Finnhub key; price questions then get a clear answer.
+    result = await QuoteService(source=None).get_quote("AAPL")
+
+    assert isinstance(result, ToolError)
+    assert result.error_type == "unavailable"
+    assert "not set up" in result.message
+    assert result.source_url is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_no_price_source_still_checks_the_ticker_first() -> None:
+    result = await QuoteService(source=None).get_quote("123")
+
+    assert isinstance(result, ToolError)
+    assert result.error_type == "invalid_input"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_rejected_key_returns_unavailable_not_try_again(status: int) -> None:
+    error = MarketDataError(f"Provider returned HTTP {status}", status_code=status)
+
+    result = await QuoteService(FakeQuoteSource(error=error)).get_quote("AAPL")
+
+    assert isinstance(result, ToolError)
+    assert result.error_type == "unavailable"
+    assert "try again" not in result.message.lower()

@@ -7,6 +7,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 
 from alphadesk.integrations.finnhub import FinnhubClient
+from alphadesk.integrations.retry import RetryPolicy
 from alphadesk.services.quotes import QuoteService
 from alphadesk.tools.quote_tool import make_get_quote_tool
 
@@ -16,7 +17,7 @@ def _tool(response: httpx.Response) -> BaseTool:
         base_url="https://finnhub.io/api/v1",
         transport=httpx.MockTransport(lambda _: response),
     )
-    return make_get_quote_tool(QuoteService(FinnhubClient(http)))
+    return make_get_quote_tool(QuoteService(FinnhubClient(http, RetryPolicy(max_attempts=1))))
 
 
 APPLE = httpx.Response(200, json={"c": 227.5, "d": 1.25, "dp": 0.55, "t": 1_762_966_800})

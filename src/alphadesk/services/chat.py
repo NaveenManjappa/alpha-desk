@@ -11,11 +11,12 @@ one (`AnswerStream`), so this module needs no LangChain import, and tests can pa
 """
 
 import logging
-import time
 from collections.abc import AsyncIterator, Callable
 
 from alphadesk.domain.answer import NoAnswerError
 from alphadesk.domain.chat_events import ChatEvent, ErrorEvent, FinalEvent, ProgressEvent
+from alphadesk.domain.errors import RunLimitError
+from alphadesk.domain.usage import RunUsage
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,10 @@ AnswerStream = Callable[[str, str], AsyncIterator[ProgressEvent | FinalEvent]]
 NO_ANSWER_MESSAGE = (
     "The research desk could not produce an answer to that. "
     "Try asking about a US-listed company's price, financials or filings."
+)
+RUN_LIMIT_MESSAGE = (
+    "That question needed more research steps than one answer is allowed. "
+    "Try asking about one company and one topic at a time."
 )
 FAILED_MESSAGE = "Something went wrong while researching that. Please try again."
 
@@ -50,31 +55,42 @@ class ChatService:
             Any `status` and `token` events, then exactly one `final` or `error` event.
             Nothing is yielded after that last event.
         """
-        started = time.perf_counter()
         # The thread ID only: the message may hold personal details, so it is not logged.
         logger.info("Chat turn started on thread %s.", thread_id)
         try:
             async for event in self._stream_answer(message, thread_id):
                 yield event
                 if isinstance(event, FinalEvent):
-                    logger.info(
-                        "Chat turn finished on thread %s in %.1fs.",
-                        thread_id,
-                        time.perf_counter() - started,
-                    )
+                    _log_usage(thread_id, event.usage)
                     return
         except NoAnswerError:
             logger.warning("Chat turn on thread %s ended without an answer.", thread_id)
             yield ErrorEvent(message=NO_ANSWER_MESSAGE)
             return
+        except RunLimitError as exc:
+            logger.warning("Chat turn on thread %s stopped: %s", thread_id, exc)
+            yield ErrorEvent(message=RUN_LIMIT_MESSAGE)
+            return
         except Exception:
             # Deliberately broad. This is the last place a failure can still reach the client,
             # and an unknown error must end the stream with an `error` event, not cut it off.
-            # Nothing is swallowed: the full traceback goes to the log. Slice 12 adds
-            # specific, friendlier handling for the failures we expect.
+            # Nothing is swallowed: the full traceback goes to the log. This includes the
+            # model provider failing after its own retries; a fallback model comes later.
             logger.exception("Chat turn on thread %s failed.", thread_id)
             yield ErrorEvent(message=FAILED_MESSAGE)
             return
         # The answer stream ended without a final event. That is a bug, not a user error.
         logger.error("Chat turn on thread %s ended without a final event.", thread_id)
         yield ErrorEvent(message=FAILED_MESSAGE)
+
+
+def _log_usage(thread_id: str, usage: RunUsage) -> None:
+    """One line per finished run, so cost can be watched from the logs alone."""
+    logger.info(
+        "Chat turn finished on thread %s: %.1fs, %d input + %d output tokens, est. $%.4f.",
+        thread_id,
+        usage.duration_seconds,
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.estimated_cost_usd,
+    )

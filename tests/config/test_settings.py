@@ -141,3 +141,24 @@ def test_history_budget_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> Non
 
     with pytest.raises(ValidationError, match="history_max_tokens"):
         Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("ALPHADESK_HTTP_MAX_ATTEMPTS", "0"),  # at least one try
+        ("ALPHADESK_HTTP_MAX_ATTEMPTS", "6"),  # retries are bounded
+        ("ALPHADESK_HTTP_RETRY_BASE_DELAY_SECONDS", "-1"),
+        ("ALPHADESK_AGENT_MAX_MODEL_CALLS", "1"),  # one call cannot fetch data and answer
+        ("ALPHADESK_LLM_PRICE_SMALL_INPUT_PER_MILLION", "-0.1"),
+    ],
+)
+def test_limits_and_prices_outside_their_range_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
