@@ -19,6 +19,7 @@ from alphadesk.api.app import create_app
 from alphadesk.api.dependencies import AppServices, get_services
 from alphadesk.domain.answer import DISCLAIMER, Answer
 from alphadesk.domain.chat_events import FinalEvent, ProgressEvent, StatusEvent
+from alphadesk.domain.thread import AnswerMessage, QuestionMessage, Thread
 from alphadesk.domain.usage import RunUsage
 from alphadesk.services.chat import ChatService
 from alphadesk.services.health import PostgresCheck
@@ -54,12 +55,20 @@ class RecordingAnswerStream:
         yield FinalEvent(answer=ANSWER, usage=USAGE)
 
 
+async def _read_thread(thread_id: str) -> Thread:
+    """A thread with one question and its answer, whatever the ID."""
+    messages = [QuestionMessage(text="Apple price?"), AnswerMessage(answer=ANSWER, usage=USAGE)]
+    return Thread(thread_id=thread_id, messages=messages)
+
+
 def _client(
     stream: RecordingAnswerStream | None = None, check_postgres: PostgresCheck | None = None
 ) -> TestClient:
     """A test client whose routes get fake services instead of the real ones."""
     services = AppServices(
-        chat=ChatService(stream or RecordingAnswerStream()), check_postgres=check_postgres
+        chat=ChatService(stream or RecordingAnswerStream()),
+        read_thread=_read_thread,
+        check_postgres=check_postgres,
     )
     app = create_app()
     app.dependency_overrides[get_services] = lambda: services
@@ -127,6 +136,23 @@ def test_chat_rejects_a_bad_request_before_running_anything(body: dict[str, str]
 
     assert response.status_code == 422
     assert stream.calls == []
+
+
+@pytest.mark.unit
+def test_thread_returns_its_messages_each_with_its_type(client: TestClient) -> None:
+    response = client.get("/threads/apple")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["thread_id"] == "apple"
+    assert [message["type"] for message in body["messages"]] == ["question", "answer"]
+    assert Thread.model_validate(body).messages[1] == AnswerMessage(answer=ANSWER, usage=USAGE)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("thread_id", ["has spaces", "x" * 65])
+def test_thread_rejects_a_bad_id(client: TestClient, thread_id: str) -> None:
+    assert client.get(f"/threads/{thread_id}").status_code == 422
 
 
 async def _up() -> bool:

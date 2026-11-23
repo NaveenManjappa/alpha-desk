@@ -3,9 +3,10 @@ import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 
 import { HealthReport } from '../models/health';
+import { Thread } from '../models/thread';
 import { ApiClient } from './api-client';
 
-describe('ApiClient.getHealth', () => {
+describe('ApiClient', () => {
   let client: ApiClient;
   let http: HttpTestingController;
 
@@ -53,5 +54,14 @@ describe('ApiClient.getHealth', () => {
     http.expectOne('/health').error(new ProgressEvent('error'));
 
     await expect(result).rejects.toMatchObject({ status: 0 });
+  });
+
+  it('fetches a thread by its ID', async () => {
+    const thread: Thread = { thread_id: 'a/b', messages: [{ type: 'question', text: 'Hi' }] };
+    const result = firstValueFrom(client.getThread('a/b'));
+
+    http.expectOne({ method: 'GET', url: '/threads/a%2Fb' }).flush(thread);
+
+    await expect(result).resolves.toEqual(thread);
   });
 });

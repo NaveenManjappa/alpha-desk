@@ -79,6 +79,8 @@ curl -N -X POST http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
   -d '{"message": "What is Apple'\''s share price?", "thread_id": "demo"}'
 
+curl http://localhost:8000/threads/demo   # the conversation so far: questions and answers
+
 curl -i http://localhost:8000/health   # 503 if Postgres is configured but unreachable
 ```
 
@@ -91,7 +93,9 @@ make run   # the API, on port 8000
 make web   # the Angular dev server, on port 4200
 ```
 
-`make web` installs the packages on first use. The dev server passes API calls on to port 8000 (see [proxy.conf.json](web/src/proxy.conf.json)), so the browser sees one address and no CORS setup is needed. A new API path must be added to that file.
+`make web` installs the packages on first use. The dev server passes API calls on to port 8000 (see [proxy.conf.mjs](web/src/proxy.conf.mjs)), so the browser sees one address and no CORS setup is needed. A new API path must be added to that file.
+
+The page keeps only the conversation's ID, in the browser's local storage. After a reload, the messages come from `GET /threads/{id}`. "New conversation" forgets the ID.
 
 In production the API serves the built app itself, from one address:
 

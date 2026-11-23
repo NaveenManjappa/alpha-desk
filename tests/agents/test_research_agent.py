@@ -2,6 +2,8 @@
 plays the LLM, the real tools, services and clients sit on in-memory httpx transports, and
 the checkpointer keeps its state in memory."""
 
+import asyncio
+import contextlib
 import json
 import re
 from collections.abc import Iterator, Sequence
@@ -35,9 +37,11 @@ from alphadesk.agents.research_agent import (
 from alphadesk.domain.answer import DISCLAIMER, Answer, AnswerDraft, NoAnswerError
 from alphadesk.domain.chat_events import FinalEvent, StatusEvent, TokenEvent
 from alphadesk.domain.errors import RunLimitError
+from alphadesk.domain.thread import AnswerMessage, QuestionMessage
 from alphadesk.domain.usage import ModelPrice, RunUsage
 from alphadesk.graph.checkpointer import create_checkpointer
 from alphadesk.graph.history import count_history_tokens
+from alphadesk.graph.threads import read_thread
 from alphadesk.integrations.finnhub import FinnhubClient
 from alphadesk.integrations.retry import RetryPolicy
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter
@@ -127,13 +131,14 @@ def _agent(
     checkpointer: BaseCheckpointSaver | None = None,
     history_max_tokens: int = NO_TRIMMING,
     max_model_calls: int = MAX_MODEL_CALLS,
+    quote_service: QuoteService | None = None,
 ) -> Any:
     """The agent with all three tools. EDGAR is never reached in these tests: it answers 503."""
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
     edgar = EdgarClient(http, RateLimiter(max_per_second=1000), NO_RETRIES)
     return create_research_agent(
         model,
-        quote_service=_quote_service(),
+        quote_service=quote_service or _quote_service(),
         financial_facts_service=FinancialFactsService(edgar),
         filings_service=FilingsService(edgar),
         history_max_tokens=history_max_tokens,
@@ -763,3 +768,89 @@ async def test_reported_usage_logs_no_warning(caplog: pytest.LogCaptureFixture) 
     await _run(_chat_agent(model), "Apple price?", "t1")
 
     assert not any("no token usage" in record.getMessage() for record in caplog.records)
+
+
+# --- Reading a thread back (Slice 15) ---------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_thread_reads_back_as_the_questions_and_answers_the_user_saw() -> None:
+    model = _model(_with_usage(ASK_FOR_QUOTE, 100, 10), _with_usage(APPLE_ANSWER, 200, 20), FOUR)
+    agent = _chat_agent(model)
+    first = await _run(agent, "Apple price?", "apple")
+    second = await _run(agent, "What is 2 plus 2?", "apple")
+
+    thread = await read_thread(agent, "apple")
+
+    assert thread.thread_id == "apple"
+    assert thread.messages == [
+        QuestionMessage(text="Apple price?"),
+        AnswerMessage(answer=first.answer, usage=first.usage),
+        QuestionMessage(text="What is 2 plus 2?"),
+        AnswerMessage(answer=second.answer, usage=second.usage),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_thread_reads_back_the_checked_answer_not_the_models_draft() -> None:
+    # Both attempts invent a figure. The thread holds both drafts and the feedback message;
+    # the user saw one question and one unverified answer without that figure.
+    second_try = ANSWER_WITH_INVENTED_CHANGE.model_copy(
+        update={"tool_calls": [{**ANSWER_WITH_INVENTED_CHANGE.tool_calls[0], "id": "answer-2"}]}
+    )
+    agent = _chat_agent(_model(ASK_FOR_QUOTE, ANSWER_WITH_INVENTED_CHANGE, second_try))
+    run = await _run(agent, "Apple price?", "t1")
+
+    thread = await read_thread(agent, "t1")
+
+    assert thread.messages == [
+        QuestionMessage(text="Apple price?"),
+        AnswerMessage(answer=run.answer, usage=run.usage),
+    ]
+    assert run.answer.verified is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_thread_nobody_has_used_reads_back_empty() -> None:
+    assert (await read_thread(_chat_agent(_model()), "new")).messages == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_run_cut_off_during_a_tool_does_not_break_the_thread() -> None:
+    # The browser is closed, or the API is stopped, while a tool call is in flight.
+    tool_started = asyncio.Event()
+
+    async def never_answers(request: httpx.Request) -> httpx.Response:
+        tool_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    http = httpx.AsyncClient(
+        base_url="https://finnhub.io/api/v1", transport=httpx.MockTransport(never_answers)
+    )
+    model = _model(ASK_FOR_QUOTE, FOUR)
+    agent = _agent(
+        model,
+        create_checkpointer(),
+        quote_service=QuoteService(FinnhubClient(http, NO_RETRIES)),
+    )
+    cut_off = asyncio.create_task(_run(agent, "Apple price?", "t1"))
+    await tool_started.wait()
+    cut_off.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await cut_off
+
+    run = await _run(agent, "What is 2 plus 2?", "t1")
+
+    assert run.answer.summary == "Two plus two is four."
+    # A provider rejects a tool call with no result, so none may be sent.
+    assert not any(m.tool_calls for m in model.calls[-1] if isinstance(m, AIMessage))
+    assert [m.type for m in (await read_thread(agent, "t1")).messages] == [
+        "question",
+        "question",
+        "answer",
+    ]

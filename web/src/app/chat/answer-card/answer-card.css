@@ -1,0 +1,90 @@
+:host {
+  --accent: var(--color-ok);
+
+  display: block;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--accent);
+  border-radius: 0.5rem;
+}
+
+:host([data-verified='false']) {
+  --accent: var(--color-warning);
+
+  border-color: var(--accent);
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border-radius: 1rem;
+  color: var(--color-background);
+  background: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.summary {
+  white-space: pre-line;
+}
+
+.warning {
+  color: var(--color-warning);
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+caption,
+h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+th,
+td {
+  padding: 0.375rem 0.75rem 0.375rem 0;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+th[scope='row'] {
+  font-weight: normal;
+}
+
+.number {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+footer {
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+}
+
+footer p {
+  margin: 0;
+}

@@ -3,20 +3,26 @@ import { inject, Service } from '@angular/core';
 import { catchError, Observable, of, throwError } from 'rxjs';
 
 import { HealthReport } from '../models/health';
+import { Thread } from '../models/thread';
 
 /**
  * Where the API is. Empty means "the same address this page came from": the dev server
- * proxies API paths (src/proxy.conf.json), and in production the API serves this app.
+ * proxies API paths (src/proxy.conf.mjs), and in production the API serves this app.
  */
 const API_BASE_URL = '';
 
 /** Longer than the API's own Postgres check (5 seconds), so a slow report still arrives. */
 const HEALTH_TIMEOUT_MS = 8_000;
 
+const THREAD_TIMEOUT_MS = 10_000;
+
 /** The only place that knows the API's address and paths. Components never call HTTP. */
 @Service()
 export class ApiClient {
   private readonly http = inject(HttpClient);
+
+  /** Where `ChatStream` sends messages. Streaming is its job; knowing the address is ours. */
+  readonly chatUrl = `${API_BASE_URL}/chat`;
 
   /**
    * Fetch the API's health report.
@@ -40,6 +46,13 @@ export class ApiClient {
           return throwError(() => error);
         }),
       );
+  }
+
+  /** Fetch a conversation's messages. A thread nobody has used comes back empty. */
+  getThread(threadId: string): Observable<Thread> {
+    return this.http.get<Thread>(`${API_BASE_URL}/threads/${encodeURIComponent(threadId)}`, {
+      timeout: THREAD_TIMEOUT_MS,
+    });
   }
 }
 

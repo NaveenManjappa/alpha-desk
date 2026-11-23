@@ -1,0 +1,37 @@
+<div class="title">
+  <h1>Chat</h1>
+  <button type="button" (click)="session.startNewConversation()">New conversation</button>
+</div>
+
+<!-- Announces only what is added, so a screen reader hears each message once. -->
+<div role="log" aria-label="Conversation">
+  <app-message-list [messages]="session.messages()" />
+</div>
+
+<!-- The live regions are always there: one that arrives with its text may go unannounced. -->
+<div role="status" class="status">
+  @if (session.loadingHistory()) {
+    <p>Loading the conversation…</p>
+  }
+  @if (session.running()) {
+    <p>Working on it…</p>
+    @for (line of session.statusLines(); track $index) {
+      <p class="step">{{ line }}</p>
+    }
+  }
+</div>
+
+<div role="alert">
+  @if (session.failure(); as failure) {
+    <p class="failure">{{ failure }}</p>
+  }
+  @if (session.historyFailed()) {
+    <p class="failure">
+      The conversation could not be loaded.
+      <button type="button" (click)="session.reloadHistory()">Try again</button>
+    </p>
+  }
+</div>
+
+<app-message-box [canSend]="session.canSend()" (messageSent)="session.send($event)" />
+<div #end></div>

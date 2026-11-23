@@ -5,7 +5,11 @@ import logging
 import pytest
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
-from alphadesk.graph.history import count_history_tokens, trim_history
+from alphadesk.graph.history import (
+    count_history_tokens,
+    drop_unfinished_tool_calls,
+    trim_history,
+)
 
 
 def _turn(number: int, result_size: int = 200) -> list[AnyMessage]:
@@ -80,3 +84,42 @@ def test_trimming_leaves_the_input_list_unchanged() -> None:
     trim_history(chat, max_tokens=50)
 
     assert chat == before
+
+
+def _cut_off_turn(*finished: str) -> list[AnyMessage]:
+    """A turn stopped while two tools ran. Only the calls in `finished` have a result."""
+    return [
+        HumanMessage("Cut off"),
+        AIMessage(
+            "",
+            tool_calls=[
+                {"name": "get_quote", "args": {"ticker": ticker}, "id": ticker}
+                for ticker in ("AAPL", "MSFT")
+            ],
+        ),
+        *(ToolMessage("result", tool_call_id=call_id) for call_id in finished),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("finished", [(), ("AAPL",)], ids=["no results", "one result of two"])
+def test_tool_calls_a_stopped_run_never_finished_are_dropped(finished: tuple[str, ...]) -> None:
+    question: AnyMessage = HumanMessage("Try again")
+
+    kept = drop_unfinished_tool_calls([*_turn(0), *_cut_off_turn(*finished), question])
+
+    # The question that was cut off stays; the half-done tool exchange goes, results included.
+    assert [m.text for m in kept if isinstance(m, HumanMessage)] == [
+        "Question 0",
+        "Cut off",
+        "Try again",
+    ]
+    assert kept[:5] == _turn(0)
+    assert len(kept) == 7
+
+
+@pytest.mark.unit
+def test_finished_tool_calls_are_all_kept() -> None:
+    chat = [*_chat(3), *_cut_off_turn("AAPL", "MSFT")]
+
+    assert drop_unfinished_tool_calls(chat) == chat

@@ -1,0 +1,48 @@
+:host {
+  display: grid;
+  gap: 1rem;
+}
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+[role='log'] {
+  min-width: 0;
+}
+
+.status {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.status p {
+  margin: 0;
+}
+
+.step::before {
+  content: '› ';
+}
+
+/* Earlier steps are done; the last one is what is happening now. */
+.step:last-child {
+  color: var(--color-text);
+}
+
+.failure {
+  margin: 0;
+  padding: 0.75rem;
+  border-left: 4px solid var(--color-error);
+  border-radius: 0.5rem;
+  color: var(--color-error);
+  background: var(--color-error-surface);
+}

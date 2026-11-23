@@ -1,0 +1,64 @@
+<p class="badge">{{ answer().verified ? 'Verified' : 'Not verified' }}</p>
+<p class="summary">{{ answer().summary }}</p>
+
+@if (!answer().verified) {
+  <p class="warning">Some figures could not be matched to their source and were left out.</p>
+}
+
+@if (answer().key_figures.length > 0) {
+  <div class="table-scroll">
+    <table>
+      <caption>
+        Key figures
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Figure</th>
+          <th scope="col" class="number">Value</th>
+          <th scope="col">Unit</th>
+          <th scope="col">Period</th>
+          <th scope="col">Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (figure of answer().key_figures; track $index) {
+          <tr>
+            <th scope="row">{{ figure.label }}</th>
+            <td class="number">{{ figure.value | number: '1.0-6' }}</td>
+            <td>{{ figure.unit }}</td>
+            <td>{{ figure.period }}</td>
+            <td>
+              <a
+                [href]="figure.source_url"
+                target="_blank"
+                rel="noopener noreferrer"
+                [attr.aria-label]="'Source for ' + figure.label + ', ' + figure.period"
+                >Source</a
+              >
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}
+
+@if (answer().sources.length > 0) {
+  <section>
+    <h2>Sources</h2>
+    <ul>
+      @for (source of answer().sources; track $index) {
+        <li>
+          <a [href]="source" target="_blank" rel="noopener noreferrer">{{ source }}</a>
+        </li>
+      }
+    </ul>
+  </section>
+}
+
+<footer>
+  <p>
+    Data as of <time [attr.datetime]="answer().as_of">{{ answer().as_of | date: 'medium' }}</time>
+  </p>
+  <p>{{ answer().disclaimer }}</p>
+</footer>

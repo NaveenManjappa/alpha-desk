@@ -7,6 +7,11 @@ import { routes } from './app.routes';
 import { HealthMonitor } from './health/health-monitor';
 
 describe('App', () => {
+  beforeEach(() => {
+    localStorage.clear(); // No conversation to fetch.
+    Element.prototype.scrollIntoView = vi.fn(); // jsdom lays nothing out, so it has none.
+  });
+
   it('shows the header, the health indicator and the chat page', async () => {
     TestBed.configureTestingModule({
       providers: [

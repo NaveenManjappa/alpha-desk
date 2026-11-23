@@ -27,7 +27,8 @@ forever. The check runs before each model call, so a stopped thread never ends o
 call that has no result, and the next question on it works as normal.
 
 Each turn also reports its `RunUsage`: time, tokens (as the provider counted them) and
-estimated cost. It goes out in the `final` event and is saved in the thread, on the answer.
+estimated cost. It goes out in the `final` event, and is saved with the checked answer in the
+thread, so a reloaded conversation shows exactly what was streamed (`graph/threads.py`).
 
 The agent runs with `astream`, so progress can be shown while it works.
 `stream_research_agent` turns what the graph streams into chat events: a `status` event
@@ -69,9 +70,11 @@ from pydantic import TypeAdapter, ValidationError
 from alphadesk.domain.answer import Answer, AnswerDraft, NoAnswerError
 from alphadesk.domain.chat_events import FinalEvent, ProgressEvent, StatusEvent, TokenEvent
 from alphadesk.domain.errors import RunLimitError
+from alphadesk.domain.thread import AnswerMessage
 from alphadesk.domain.tool_results import ToolResult
 from alphadesk.domain.usage import ModelPrice, RunUsage
 from alphadesk.graph.history import TrimHistoryMiddleware
+from alphadesk.graph.threads import ANSWER_TOOL, desk_message
 from alphadesk.services.answers import finalise_answer
 from alphadesk.services.filings import FilingsService
 from alphadesk.services.financials import FinancialFactsService
@@ -93,10 +96,6 @@ _tool_result_adapter: TypeAdapter[ToolResult] = TypeAdapter(ToolResult)
 
 # The names of the two nodes `create_agent` builds, as they appear in streamed metadata.
 _MODEL_NODE = "model"
-
-# `ToolStrategy` names the answer tool after the output class. Calling it ends the run; it
-# fetches no data, so it gets no status event.
-_ANSWER_TOOL = AnswerDraft.__name__
 
 # What the user is shown when the model calls each data tool. A tool missing here still
 # gets a status event, with a plain fallback message.
@@ -295,7 +294,7 @@ async def _research_turn(
     if failures:
         logger.info("Retrying the research agent once after a failed grounding check.")
         # Only the feedback is sent: the first attempt is already saved on the thread.
-        feedback = HumanMessage(_retry_prompt(failures))
+        feedback = desk_message(_retry_prompt(failures))
         async for event in _stream_attempt(agent, feedback, config):
             yield event
         state = await _saved_state(agent, config)
@@ -313,8 +312,9 @@ async def _research_turn(
         # A real model call never uses zero tokens, so the provider sent no usage. Missing
         # usage counts as zero so the answer still goes out, but it must not pass unseen.
         logger.warning("The model reported no token usage on thread %s; cost shows $0.", thread_id)
-    await _save_usage(agent, config, turn, usage)
-    yield ResearchRun(answer=apply_grounding(answer, failures), messages=turn, usage=usage)
+    answer = apply_grounding(answer, failures)
+    await _save_answer(agent, config, turn, AnswerMessage(answer=answer, usage=usage))
+    yield ResearchRun(answer=answer, messages=turn, usage=usage)
 
 
 async def _stream_attempt(
@@ -375,8 +375,8 @@ def _status_events(update: dict[str, Any]) -> list[StatusEvent]:
             continue
         for call in message.tool_calls:
             name = call["name"]
-            if name == _ANSWER_TOOL:
-                continue
+            if name == ANSWER_TOOL:
+                continue  # Ends the run and fetches no data, so there is nothing to report.
             status = _TOOL_STATUS.get(name, f"Running {name}")
             events.append(StatusEvent(tool=name, message=status))
     return events
@@ -470,34 +470,32 @@ def _token_counts(messages: Sequence[BaseMessage]) -> list[tuple[int, int]]:
     return counts
 
 
-async def _save_usage(
+async def _save_answer(
     agent: CompiledStateGraph,
     config: RunnableConfig,
     turn: Sequence[BaseMessage],
-    usage: RunUsage,
+    answer: AnswerMessage,
 ) -> None:
-    """Save the turn's usage in the thread, on the message that confirms the answer.
+    """Save the turn's answer and usage in the thread, on the message that confirms the answer.
 
-    It goes in that `ToolMessage`'s `artifact`: a field LangChain keeps with the message,
+    They go in that `ToolMessage`'s `artifact`: a field LangChain keeps with the message,
     and so in the checkpoint, but never sends to the model. A reloaded conversation can
-    then show what each answer cost, and the model's context is not touched.
+    then show each answer and what it cost, and the model's context is not touched.
 
     `aupdate_state` with a message that has an existing ID replaces that message rather
     than adding one (the `add_messages` reducer matches on ID).
     """
-    answer_message = _last_answer_message(turn)
-    if answer_message is None:
+    confirmation = _last_answer_message(turn)
+    if confirmation is None:
         return
-    with_usage = answer_message.model_copy(
-        update={"artifact": {"usage": usage.model_dump(mode="json")}}
-    )
-    await agent.aupdate_state(config, {"messages": [with_usage]})
+    with_answer = confirmation.model_copy(update={"artifact": answer.model_dump(mode="json")})
+    await agent.aupdate_state(config, {"messages": [with_answer]})
 
 
 def _last_answer_message(messages: Sequence[BaseMessage]) -> ToolMessage | None:
     """The confirmation `ToolStrategy` added for the final answer tool call, if any."""
     for message in reversed(messages):
-        if isinstance(message, ToolMessage) and message.name == _ANSWER_TOOL:
+        if isinstance(message, ToolMessage) and message.name == ANSWER_TOOL:
             return message
     return None
 

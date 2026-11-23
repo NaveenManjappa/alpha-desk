@@ -1,4 +1,4 @@
-"""Bounded history: keep what the model is sent under a token budget.
+"""What the model is sent of a thread's history: whole tool exchanges, under a token budget.
 
 A thread's checkpoint keeps every message forever. Sending all of it on every model call
 would make each call slower and dearer than the last, and a long enough chat would
@@ -16,13 +16,17 @@ The system prompt is not in the trimmed list: `create_agent` keeps it apart, in
 Trimming only ever cuts just before a `HumanMessage`. Everything after a question, up to
 the next one, is kept or dropped together, so a tool result is never separated from the
 tool call that asked for it. Providers reject a tool result whose call is missing.
+
+They also reject a call whose result is missing. A run that is stopped while a tool works
+(the browser is closed, the API goes down) leaves one in the thread for good, so without
+`drop_unfinished_tool_calls` every later question on that thread would fail.
 """
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, ToolMessage
 
 # Imported from `utils` directly: the package re-exports them lazily, which hides their
 # types from Pyright.
@@ -39,6 +43,32 @@ def count_history_tokens(messages: Sequence[BaseMessage]) -> int:
     not an exact limit, so leave headroom below the model's real context window.
     """
     return count_tokens_approximately(messages)
+
+
+def drop_unfinished_tool_calls(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
+    """Leave out tool calls that never got their result, as a stopped run leaves them.
+
+    A model message with several calls goes as a whole if any one is unfinished, and so do
+    the results it did get. The question before it stays.
+
+    Args:
+        messages: The conversation, oldest first.
+
+    Returns:
+        The messages without half-done tool exchanges: the original ones, not copies.
+    """
+    finished = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    unfinished = [
+        m
+        for m in messages
+        if isinstance(m, AIMessage) and any(call["id"] not in finished for call in m.tool_calls)
+    ]
+    orphaned = {call["id"] for m in unfinished for call in m.tool_calls}
+    return [
+        m
+        for m in messages
+        if m not in unfinished and not (isinstance(m, ToolMessage) and m.tool_call_id in orphaned)
+    ]
 
 
 def trim_history(messages: Sequence[AnyMessage], max_tokens: int) -> list[AnyMessage]:
@@ -86,7 +116,9 @@ def _index_of_latest_question(messages: Sequence[BaseMessage]) -> int | None:
 
 
 class TrimHistoryMiddleware(AgentMiddleware):
-    """Trims what each model call is sent to the history budget. Leaves the state alone.
+    """Cuts what each model call is sent down to whole tool exchanges within the budget.
+
+    The state is left alone.
 
     `create_agent` runs every middleware's `wrap_model_call` around each model call.
     This one swaps in the trimmed messages and passes the request on.
@@ -116,7 +148,7 @@ class TrimHistoryMiddleware(AgentMiddleware):
         return await handler(self._trimmed(request))
 
     def _trimmed(self, request: ModelRequest) -> ModelRequest:
-        kept = trim_history(request.messages, self.max_tokens)
+        kept = trim_history(drop_unfinished_tool_calls(request.messages), self.max_tokens)
         dropped = len(request.messages) - len(kept)
         if dropped:
             logger.debug(

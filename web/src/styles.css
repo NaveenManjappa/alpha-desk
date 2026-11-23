@@ -3,11 +3,14 @@
 
   --color-text: #1f2933;
   --color-background: #ffffff;
+  --color-surface: #eef1f5;
   --color-border: #d5dae1;
   --color-muted: #6b7280;
   --color-ok: #15803d;
   --color-warning: #b45309;
   --color-error: #b91c1c;
+  --color-error-surface: #fef2f2;
+  --color-action: #1d4ed8;
 }
 
 body {
@@ -16,4 +19,45 @@ body {
   background: var(--color-background);
   font-family: system-ui, sans-serif;
   line-height: 1.5;
+}
+
+button {
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--color-muted);
+  border-radius: 0.5rem;
+  color: var(--color-text);
+  background: var(--color-background);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+button.primary {
+  border-color: var(--color-action);
+  color: var(--color-background);
+  background: var(--color-action);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+a {
+  color: var(--color-action);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-action);
+  outline-offset: 2px;
+}
+
+/* For screen readers only. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

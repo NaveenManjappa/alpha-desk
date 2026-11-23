@@ -11,7 +11,7 @@ shutdown. `open_research_agent` builds just the agent, for the chat script and t
 """
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -22,7 +22,9 @@ from langgraph.graph.state import CompiledStateGraph
 
 from alphadesk.agents.research_agent import create_research_agent, stream_research_agent
 from alphadesk.config.settings import Settings
+from alphadesk.domain.thread import Thread
 from alphadesk.graph.checkpointer import open_checkpointer
+from alphadesk.graph.threads import read_thread
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
 from alphadesk.integrations.llm import get_chat_model, get_model_price
 from alphadesk.integrations.postgres import postgres_is_reachable
@@ -43,10 +45,12 @@ class AppServices:
 
     Attributes:
         chat: Runs chat turns.
+        read_thread: Reads a conversation by its thread ID.
         check_postgres: Pings Postgres, or None when no Postgres URL is set.
     """
 
     chat: ChatService
+    read_thread: Callable[[str], Awaitable[Thread]]
     check_postgres: PostgresCheck | None
 
 
@@ -72,6 +76,7 @@ async def open_app_services(settings: Settings) -> AsyncGenerator[AppServices]:
             chat=ChatService(
                 partial(stream_research_agent, agent, price=get_model_price("small", settings))
             ),
+            read_thread=partial(read_thread, agent),
             check_postgres=(
                 partial(postgres_is_reachable, settings) if settings.postgres_url else None
             ),
