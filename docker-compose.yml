@@ -1,0 +1,32 @@
+# Local services for AlphaDesk. Start with: docker compose up -d
+# Phase 1 needs only Postgres, for the LangGraph checkpointer. Qdrant and Redis come later.
+#
+# The user, password and database below are for this local container only. Compose reads
+# them from .env if set, otherwise uses the "alphadesk" defaults. They must match
+# ALPHADESK_POSTGRES_URL.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alphadesk}
+      POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
+    ports:
+      # Bound to localhost only, so the database is not reachable from the network.
+      # Host port 5433, not Postgres's usual 5432, so it does not clash with a Postgres
+      # already installed on the machine (e.g. Postgres.app). Inside the container it is
+      # still 5432. Set POSTGRES_PORT in .env to change it.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # A named volume, so data survives `docker compose down` (but not `down -v`).
+      # Postgres 18 images keep their data under /var/lib/postgresql, not .../data.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:

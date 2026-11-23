@@ -1,0 +1,27 @@
+:host {
+  --dot: var(--color-muted);
+
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+:host([data-health='ok']) {
+  --dot: var(--color-ok);
+}
+
+:host([data-health='degraded']) {
+  --dot: var(--color-warning);
+}
+
+:host([data-health='unreachable']) {
+  --dot: var(--color-error);
+}
+
+.dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--dot);
+}

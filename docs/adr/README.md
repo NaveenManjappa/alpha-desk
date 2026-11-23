@@ -18,5 +18,6 @@ Each ADR records one decision: the problem, the options, the choice, and what it
 | [012](012-guardrails.md) | NeMo Guardrails for input, code for tool and output rules | Accepted |
 | [013](013-running-and-hosting.md) | Local-first with Docker Compose, optional free-tier deploy | Accepted |
 | [014](014-openai-default-provider.md) | OpenAI as the default provider, set by configuration | Accepted |
+| [015](015-angular-web-ui.md) | Angular for the web UI, starting at the end of Phase 1 | Accepted |
 
 Template for new ADRs: Context, Options considered, Decision, Consequences, In short.

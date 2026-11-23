@@ -1,0 +1,76 @@
+:host {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* Beside the chat, in view while the chat scrolls. A long list scrolls by itself. */
+app-conversation-list {
+  position: sticky;
+  top: 1.5rem;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+}
+
+/* Above the chat, and short enough that the chat stays in reach. */
+@media (max-width: 48rem) {
+  :host {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  app-conversation-list {
+    position: static;
+    max-height: 14rem;
+  }
+}
+
+.chat {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+[role='log'] {
+  min-width: 0;
+}
+
+.status {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.status p {
+  margin: 0;
+}
+
+.step::before {
+  content: '› ';
+}
+
+/* Earlier steps are done; the last one is what is happening now. */
+.step:last-child {
+  color: var(--color-text);
+}
+
+.failure {
+  margin: 0;
+  padding: 0.75rem;
+  border-left: 4px solid var(--color-error);
+  border-radius: 0.5rem;
+  color: var(--color-error);
+  background: var(--color-error-surface);
+}

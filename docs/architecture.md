@@ -1,6 +1,6 @@
 # AlphaDesk — Architecture
 
-Status: v0.3, approved 10 Nov 2026. Decisions are recorded in `docs/adr/`. · 10 Nov 2026 · Owner: Naveen Manjappa
+Status: v0.5, updated 23 Nov 2026 (approved 10 Nov 2026). Decisions are recorded in `docs/adr/`. · 10 Nov 2026 · Owner: Naveen Manjappa
 
 AlphaDesk is an AI investment research desk. A team of agents researches US-listed companies, writes cited briefs, and runs a paper-trading portfolio. Every trade needs human approval. All money is simulated and in USD.
 
@@ -49,7 +49,7 @@ flowchart LR
 
 | Layer | What it holds | Technology |
 |---|---|---|
-| Interface | Streaming chat, approval inbox, portfolio view | FastAPI, plain web page |
+| Interface | Streaming chat, approval inbox, portfolio view | FastAPI, Angular web app (ADR 015) |
 | Orchestration | Supervisor graph, routing, handoffs | LangGraph |
 | Agents | Supervisor plus six specialists (section 5) | LangChain `create_agent` + middleware |
 | Tools | Three MCP servers (section 7) | FastMCP servers, LangChain MCP client |
@@ -239,7 +239,7 @@ A small golden dataset runs in CI. A drop in scores blocks the merge.
 
 | Store | Holds |
 |---|---|
-| Postgres | Checkpoints, long-term memory, portfolio, orders, audit log |
+| Postgres | Checkpoints, the list of conversations, long-term memory, portfolio, orders, audit log |
 | Qdrant | Filing chunks and embeddings |
 | Redis | Tool-result and semantic caches |
 
@@ -250,7 +250,9 @@ Filings pipeline: download from SEC EDGAR, parse, split into chunks that keep ta
 | Endpoint | Purpose |
 |---|---|
 | `POST /chat` | Send a message. Streams progress and the answer. |
+| `GET /threads` | The conversations used most recently, newest first |
 | `GET /threads/{id}` | Conversation history |
+| `DELETE /threads/{id}` | Delete a conversation for good |
 | `GET /approvals` | Orders waiting for a decision |
 | `POST /approvals/{id}` | Approve or reject an order |
 | `GET /portfolio` | Holdings, cash and performance |
@@ -281,12 +283,14 @@ alpha-desk/
     guardrails/
     domain/         # Pydantic models: Brief, OrderProposal, ...
     services/       # portfolio maths, risk calculations
+    repositories/   # our own tables: the only place with SQL
     integrations/   # clients for outside APIs: Finnhub, SEC EDGAR
     config/
   mcp_servers/
     market_data/
     filings/
     paper_broker/
+  web/             # Angular app: UI only, no business logic
   evals/
   tests/
 ```
@@ -331,9 +335,9 @@ Free tiers change. Recheck each one on the provider's own pricing page before de
 
 | Phase | Adds | Working result |
 |---|---|---|
-| 1. Single agent | One agent, plain tools, typed output, streaming, history, checkpointer, tracing, first evals | Ask about a company, get a cited answer |
+| 1. Single agent | One agent, plain tools, typed output, streaming, history, checkpointer, tracing, first evals, first web UI | Ask about a company in the browser, get a cited answer |
 | 2. Knowledge and MCP | Filings pipeline, three MCP servers | Answers grounded in filings and live prices |
-| 3. Research desk | Supervisor, parallel analysts, critic loop, plain chat page | A full brief from one question |
+| 3. Research desk | Supervisor, parallel analysts, critic loop, brief view in the UI | A full brief from one question |
 | 4. Memory and cache | Long-term store, summarisation, three caches | Remembers the investor, costs less per run |
 | 5. Actions | Paper broker writes, handoff, approval, idempotency, crash recovery, audit | Approve a trade, portfolio updates safely |
 | 6. Trust layer | NeMo input rails, full rule checks, DeepEval suite, CI gate, dashboards | A quality report with real numbers |
@@ -359,6 +363,7 @@ Phases 1 to 5 are the core. Phase 6 adds depth. Phase 7 is optional: the app is 
 | 012 | Guardrail tooling | NeMo Guardrails for input, code for tool and output layers |
 | 013 | Local-first running and cloud hosting | Docker Compose first. Optional deploy on Neon, Qdrant Cloud and Upstash, with a Qdrant keep-alive job. |
 | 014 | Default LLM provider | OpenAI by default. Provider set by config, Azure OpenAI supported. |
+| 015 | Web UI | Angular, from the end of Phase 1. Thin: no business logic. |
 
 ## 19. Verified against current docs
 

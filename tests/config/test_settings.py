@@ -7,18 +7,19 @@ from alphadesk.config.settings import Settings
 
 
 @pytest.mark.unit
-def test_defaults_load_without_any_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ALPHADESK_ENVIRONMENT", raising=False)
-    monkeypatch.delenv("ALPHADESK_LOG_LEVEL", raising=False)
+def test_defaults_load_with_only_the_openai_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
 
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
 
     assert settings.environment == "dev"
     assert settings.log_level == "INFO"
+    assert settings.llm_provider == "openai"
 
 
 @pytest.mark.unit
 def test_environment_variable_overrides_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("ALPHADESK_LOG_LEVEL", "DEBUG")
 
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
@@ -28,7 +29,136 @@ def test_environment_variable_overrides_default(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.unit
 def test_invalid_value_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("ALPHADESK_ENVIRONMENT", "staging")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_missing_openai_key_names_the_setting() -> None:
+    with pytest.raises(ValidationError, match="ALPHADESK_OPENAI_API_KEY"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_azure_settings_are_not_needed_for_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.azure_openai_endpoint is None
+
+
+@pytest.mark.unit
+def test_missing_azure_settings_are_all_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_LLM_PROVIDER", "azure_openai")
+    monkeypatch.setenv("ALPHADESK_AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    message = str(error.value)
+    assert "ALPHADESK_AZURE_OPENAI_API_KEY" in message
+    assert "ALPHADESK_AZURE_OPENAI_DEPLOYMENT_SMALL" in message
+    assert "ALPHADESK_AZURE_OPENAI_ENDPOINT" not in message
+
+
+@pytest.mark.unit
+def test_tracing_is_off_by_default_with_the_dev_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.langsmith_tracing is False
+    assert settings.langsmith_project == "alphadesk-dev"
+
+
+@pytest.mark.unit
+def test_tracing_on_without_a_key_names_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_LANGSMITH_TRACING", "true")
+
+    with pytest.raises(ValidationError, match="ALPHADESK_LANGSMITH_API_KEY"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_sec_user_agent_must_include_a_contact_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_SEC_EDGAR_USER_AGENT", "AlphaDesk")
+
+    with pytest.raises(ValidationError, match="ALPHADESK_SEC_EDGAR_USER_AGENT"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_sec_rate_limit_cannot_exceed_secs_ten_per_second(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_SEC_EDGAR_MAX_REQUESTS_PER_SECOND", "20")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_checkpointer_is_in_memory_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert settings.checkpointer == "memory"
+    assert settings.postgres_url is None
+
+
+@pytest.mark.unit
+def test_postgres_checkpointer_without_a_url_names_the_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_CHECKPOINTER", "postgres")
+
+    with pytest.raises(ValidationError, match="ALPHADESK_POSTGRES_URL"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+def test_postgres_url_is_kept_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_CHECKPOINTER", "postgres")
+    monkeypatch.setenv("ALPHADESK_POSTGRES_URL", "postgresql://u:hunter2@localhost/db")
+
+    settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    assert "hunter2" not in repr(settings)
+
+
+@pytest.mark.unit
+def test_history_budget_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ALPHADESK_HISTORY_MAX_TOKENS", "0")
+
+    with pytest.raises(ValidationError, match="history_max_tokens"):
+        Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("ALPHADESK_HTTP_MAX_ATTEMPTS", "0"),  # at least one try
+        ("ALPHADESK_HTTP_MAX_ATTEMPTS", "6"),  # retries are bounded
+        ("ALPHADESK_HTTP_RETRY_BASE_DELAY_SECONDS", "-1"),
+        ("ALPHADESK_AGENT_MAX_MODEL_CALLS", "1"),  # one call cannot fetch data and answer
+        ("ALPHADESK_LLM_PRICE_SMALL_INPUT_PER_MILLION", "-0.1"),
+    ],
+)
+def test_limits_and_prices_outside_their_range_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv("ALPHADESK_OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv(name, value)
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # pyright: ignore[reportCallIssue]

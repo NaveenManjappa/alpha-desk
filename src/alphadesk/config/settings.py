@@ -1,9 +1,14 @@
 """Application settings, loaded from environment variables and an optional `.env` file."""
 
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Self
 
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LlmProvider = Literal["openai", "azure_openai"]
+CheckpointerKind = Literal["memory", "postgres"]
 
 
 class Settings(BaseSettings):
@@ -22,6 +27,138 @@ class Settings(BaseSettings):
 
     environment: Literal["dev", "test", "prod"] = "dev"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    # --- Web UI (ADR 015) ---
+    # The folder holding the built Angular app. Set it and the API serves the app as well.
+    # Leave it unset in development, where the Angular dev server (`make web`) serves it.
+    web_dist_dir: Path | None = None
+
+    # --- LLM provider (ADR 014) ---
+    llm_provider: LlmProvider = "openai"
+    llm_timeout_seconds: float = 60.0
+    llm_max_retries: int = 2
+    # Budget for the conversation history sent on each model call, in estimated tokens
+    # (about four characters each). Older turns beyond it are left out of the call but
+    # stay in the checkpoint. The system prompt and tool schemas are not counted.
+    history_max_tokens: int = Field(default=16_000, gt=0)
+    # The most model calls one run may make before it is stopped (Slice 12). A price
+    # question takes two (ask for data, then answer); a run that fetches from every tool
+    # one after another, then fixes a malformed answer, takes about five. The limit is
+    # per run, and a grounding retry is a second run.
+    agent_max_model_calls: int = Field(default=8, ge=2)
+
+    # Estimated cost per run (Slice 12): each tier's price in US dollars per million
+    # tokens. Prices change: check the provider's pricing page and keep these current.
+    # The defaults are OpenAI's list prices for gpt-5-mini, the default model.
+    llm_price_small_input_per_million: float = Field(default=0.25, ge=0)
+    llm_price_small_output_per_million: float = Field(default=2.00, ge=0)
+    llm_price_large_input_per_million: float = Field(default=0.25, ge=0)
+    llm_price_large_output_per_million: float = Field(default=2.00, ge=0)
+
+    # OpenAI. Model names per tier; both tiers may point at the same model.
+    openai_api_key: SecretStr | None = None
+    openai_model_small: str = "gpt-5-mini"
+    openai_model_large: str = "gpt-5-mini"
+
+    # Azure OpenAI, called through its v1 API, which needs no API version.
+    # Read only when llm_provider is "azure_openai".
+    # On Azure you call a deployment you created, not a model name, so each tier names one.
+    azure_openai_endpoint: str | None = None
+    azure_openai_api_key: SecretStr | None = None
+    azure_openai_deployment_small: str | None = None
+    azure_openai_deployment_large: str | None = None
+
+    # --- Tracing (ADR 008) ---
+    # Off by default, so tests and fresh clones never send traces by accident.
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "alphadesk-dev"
+    # Only needed outside LangSmith's US region, e.g. https://eu.api.smith.langchain.com
+    langsmith_endpoint: str | None = None
+
+    # --- Retries for the data providers (Finnhub, SEC EDGAR) ---
+    # Rate limits, server errors and dropped connections are tried again, up to this many
+    # attempts in total. Timeouts, bad requests and rejected keys never are. The model has
+    # its own retries: llm_max_retries.
+    http_max_attempts: int = Field(default=3, ge=1, le=5)
+    # Wait after the first failure; it doubles after each one after that.
+    http_retry_base_delay_seconds: float = Field(default=0.5, ge=0)
+
+    # --- Market data: Finnhub (ADR 007) ---
+    # Optional at startup: only the quote tool needs it, and it reports a missing key itself.
+    finnhub_api_key: SecretStr | None = None
+    finnhub_base_url: str = "https://finnhub.io/api/v1"
+    finnhub_timeout_seconds: float = 10.0
+
+    # --- Filings: SEC EDGAR ---
+    # SEC asks every caller to identify itself in the User-Agent header with a name and a
+    # contact email, e.g. "AlphaDesk you@example.com". Optional at startup, like the Finnhub
+    # key: only the EDGAR tools need it.
+    sec_edgar_user_agent: str | None = None
+    sec_edgar_timeout_seconds: float = 10.0
+    # SEC's fair-access limit is 10 requests per second, in total. We stay well under it.
+    sec_edgar_max_requests_per_second: float = Field(default=5.0, gt=0, le=10)
+
+    # --- Checkpointer: where conversation state is saved (ADR 005) ---
+    # "memory" forgets everything when the program exits; tests always use it.
+    # "postgres" survives restarts and needs postgres_url and `make setup-db`.
+    checkpointer: CheckpointerKind = "memory"
+    # e.g. postgresql://alphadesk:alphadesk@localhost:5433/alphadesk. Secret: holds a password.
+    postgres_url: SecretStr | None = None
+    # Limit for connecting and for any one statement. Whole seconds: libpq's connect
+    # timeout takes no fractions, and treats anything under 2 as 2.
+    postgres_timeout_seconds: int = Field(default=5, ge=2)
+
+    @field_validator("sec_edgar_user_agent")
+    @classmethod
+    def _user_agent_has_contact_email(cls, value: str | None) -> str | None:
+        """SEC may block callers it cannot contact, so insist on an email in the header."""
+        if value is not None and "@" not in value:
+            raise ValueError(
+                "ALPHADESK_SEC_EDGAR_USER_AGENT must include a contact email, "
+                "e.g. 'AlphaDesk you@example.com'."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _require_tracing_settings(self) -> Self:
+        """Tracing without a key would fail quietly in a background thread, so fail loudly here."""
+        if self.langsmith_tracing and not self.langsmith_api_key:
+            raise ValueError(
+                "ALPHADESK_LANGSMITH_TRACING is true but ALPHADESK_LANGSMITH_API_KEY is missing. "
+                "Set the key, or turn tracing off."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_postgres_url(self) -> Self:
+        """A Postgres checkpointer with no database to talk to is a startup error."""
+        if self.checkpointer == "postgres" and not self.postgres_url:
+            raise ValueError(
+                "ALPHADESK_CHECKPOINTER is 'postgres' but ALPHADESK_POSTGRES_URL is missing. "
+                "Set the URL, or use the 'memory' checkpointer."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_provider_settings(self) -> Self:
+        """Fail at startup, naming every missing setting, rather than on the first model call."""
+        if self.llm_provider == "openai":
+            required = {"openai_api_key": self.openai_api_key}
+        else:
+            required = {
+                "azure_openai_endpoint": self.azure_openai_endpoint,
+                "azure_openai_api_key": self.azure_openai_api_key,
+                "azure_openai_deployment_small": self.azure_openai_deployment_small,
+                "azure_openai_deployment_large": self.azure_openai_deployment_large,
+            }
+        missing = [f"ALPHADESK_{name.upper()}" for name, value in required.items() if not value]
+        if missing:
+            raise ValueError(
+                f"Missing required setting(s) for llm_provider='{self.llm_provider}': "
+                f"{', '.join(missing)}. Set them in the environment or in .env."
+            )
+        return self
 
 
 @lru_cache

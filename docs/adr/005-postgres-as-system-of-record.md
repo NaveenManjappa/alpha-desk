@@ -1,10 +1,10 @@
 # ADR 005: One Postgres database for state, memory and business data
 
-Status: Accepted · 10 Nov 2026
+Status: Accepted · 10 Nov 2026 · `conversations` schema added 23 Nov 2026 (Phase 1, Slice 16)
 
 ## Context
 
-The system stores four kinds of durable data: graph checkpoints, long-term memory, the paper portfolio and orders, and the audit log.
+The system stores five kinds of durable data: graph checkpoints, the list of conversations, long-term memory, the paper portfolio and orders, and the audit log.
 
 ## Options considered
 
@@ -16,13 +16,15 @@ The system stores four kinds of durable data: graph checkpoints, long-term memor
 
 ## Decision
 
-Use one Postgres database, with a separate schema for each concern: `checkpoints`, `memory`, `portfolio`, `audit`.
+Use one Postgres database, with a separate schema for each concern: `checkpoints`, `conversations`, `memory`, `portfolio`, `audit`.
 
 ## Consequences
 
 - Local runs use a Postgres container. The optional cloud deploy uses Neon's free plan.
 - An order and its audit row are written in one transaction, so they cannot disagree.
 - Checkpoints grow with every step. Old threads need a clean-up job to stay inside free storage.
+- `conversations` holds our own `threads` table: which conversations exist, with a title and times. The messages stay in `checkpoints`, whose tables belong to LangGraph and may change with an upgrade. We never query those for the list.
+- Deleting a conversation removes its checkpoints first, then its row. They are two steps, not one transaction, so a failure halfway leaves a row the user can delete again.
 - Business tables are accessed through repositories, so agents never write SQL.
 
 ## In short

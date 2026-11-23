@@ -28,7 +28,7 @@ Model names for each tier live in configuration, not code. A second model acts a
 ## Consequences
 
 - All model access goes through one factory module. It is the only place that knows which provider is in use.
-- Azure-specific settings (endpoint, API version, deployment name) are read only when the provider is `azure_openai`.
+- Azure OpenAI is called through its v1 API with the same `ChatOpenAI` client, pointed at `<endpoint>/openai/v1/`. The v1 API needs no API version. Azure-specific settings (endpoint, API key, and one deployment name per tier) are read only when the provider is `azure_openai`.
 - OpenAI has no always-on content filter in the way Azure OpenAI does. If that base layer is wanted, the app calls OpenAI's moderation endpoint itself (see ADR 012).
 - Running on Azure OpenAI is verified in Phase 7. Until then it is supported by design, not by test.
 - Token counts and cost are recorded per agent, so we can see where money goes.

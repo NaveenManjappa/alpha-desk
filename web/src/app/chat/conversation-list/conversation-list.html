@@ -1,0 +1,48 @@
+<section aria-labelledby="conversations-heading">
+  <h2 id="conversations-heading" #heading tabindex="-1">Conversations</h2>
+
+  <!-- The live region is always there: one that arrives with its text may go unannounced. -->
+  <div role="alert">
+    @if (conversations.deleteFailure(); as failure) {
+      <p class="failure">{{ failure }}</p>
+    }
+    @if (conversations.failed()) {
+      <p class="failure">
+        The conversations could not be loaded.
+        <button type="button" (click)="conversations.refresh()">Try again</button>
+      </p>
+    }
+  </div>
+
+  @if (conversations.list(); as list) {
+    <ul>
+      @for (thread of list; track thread.thread_id) {
+        <li [class.open]="thread.thread_id === session.threadId()">
+          <button
+            type="button"
+            class="conversation"
+            [attr.aria-current]="thread.thread_id === session.threadId() ? 'true' : null"
+            (click)="session.openConversation(thread.thread_id)"
+          >
+            <span class="conversation-title">{{ thread.title }}</span>
+            <time [attr.datetime]="thread.last_used_at">
+              {{ thread.last_used_at | date: 'medium' }}
+            </time>
+          </button>
+          <button
+            type="button"
+            [attr.aria-label]="'Delete ' + thread.title"
+            [disabled]="!session.canDelete(thread.thread_id)"
+            (click)="delete(thread)"
+          >
+            Delete
+          </button>
+        </li>
+      } @empty {
+        <li class="note">No conversations yet.</li>
+      }
+    </ul>
+  } @else if (!conversations.failed()) {
+    <p class="note">Loading conversations…</p>
+  }
+</section>
