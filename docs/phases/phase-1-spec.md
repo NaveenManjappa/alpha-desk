@@ -43,11 +43,11 @@ You need:
 - A Finnhub API key (free plan). Check its current limits and terms on Finnhub's site.
 - A contact email for the SEC EDGAR User-Agent header. SEC asks callers to identify themselves.
 - An empty GitHub repo for the project.
-- For Slices 14 and 15: a current LTS version of Node.js and the Angular CLI.
+- For Slices 14 to 16: a current LTS version of Node.js and the Angular CLI.
 
 ## How to work through this spec
 
-There are 16 slices. Each adds **one concept**. Slices 0 to 13 build the agent and its API. Slices 14 and 15 add the web UI (ADR 015).
+There are 17 slices. Each adds **one concept**. Slices 0 to 13 build the agent and its API. Slices 14 to 16 add the web UI (ADR 015).
 
 For every slice:
 
@@ -578,9 +578,95 @@ Slices 14 and 15 together are capped at two to three days. If they run over, cut
 
 ---
 
+## Slice 16: Find and delete earlier conversations
+
+Status: draft, for review · 23 Nov 2026
+
+**Concept:** an index beside the data. The checkpointer can say what was said in a thread, but it is not built to say which threads exist. A small table answers that.
+
+**Why it is needed**
+
+Slice 9 saves every conversation, but the browser remembers only one thread ID. "New conversation" forgets it, and the old thread can no longer be reached from the page.
+
+Slice 16 has its own cap of one day. If it runs over, move deleting to its own slice. Do not cut the tests.
+
+**Decisions**
+
+| Decision | Choice | Why |
+|---|---|---|
+| Where the list lives | Our own `threads` table, in a new `conversations` schema | The checkpoint tables belong to LangGraph and hold a row per step. Their layout can change with an upgrade. |
+| What a row holds | `thread_id`, `title`, `created_at`, `last_used_at` | The messages stay in the checkpointer. Nothing is stored twice but the title. |
+| The title | The first question, cut to 80 characters in code | No model call, so no cost and no delay. |
+| When a row is written | When a turn starts, before the agent runs | A conversation whose first answer failed is still listed. |
+| If writing the row fails | Log it, and answer the question anyway | The list is a convenience. It must not stop a chat. |
+| Who writes it | `ChatService`, through the repository | It is app code. No model or tool can change the list. |
+| What delete removes | The checkpoints first, then the row. Permanent: no undo and no "deleted" flag. | If it fails halfway, the conversation is still listed, so the user can delete it again. The other order could leave messages nobody can find. |
+| Deleting an unknown thread | Succeeds | The result is what the caller asked for, so a repeated request is safe. |
+
+**Build**
+
+- A `ThreadSummary` model in `domain/`: `thread_id`, `title`, `last_used_at`.
+- A `repositories/` folder with a thread repository, and two implementations: Postgres, and in-memory for tests and for `ALPHADESK_CHECKPOINTER=memory`. The same setting picks both, so the list and the conversations are always stored in the same kind of place.
+- Three operations. `record` adds a thread, or updates only `last_used_at` if it exists, as one SQL statement. `list_recent` returns the newest first, up to a limit. `delete` removes one row.
+- The Postgres version opens a short-lived connection for each call, as the health check does, so it recovers when Postgres restarts.
+- `make setup-db` also creates the schema and table. Safe to run again.
+- `ChatService` records the thread at the start of each turn.
+- `GET /threads`, returning at most 50 summaries, newest first. A thin route over the repository. If the database is down, it returns 503 with a short message, not a stack trace.
+- `ThreadSummary` in the web `models/` folder, `GET /threads` in the API client, and the new path in the dev proxy.
+- `DELETE /threads/{id}`, returning 204. A thin route over a `ThreadService`, which deletes the checkpoints with LangGraph's own `adelete_thread`, then the row. The checkpoint deletion is passed in as a function, so the service imports no LangGraph. A failed delete returns 503, as the list does.
+- `DELETE /threads/{id}` in the API client.
+- A conversation list beside the chat: title and last-used time, the open one marked. Clicking one opens it through the existing `GET /threads/{id}`. On a narrow screen it goes above the chat.
+- Opening another conversation stops a run in progress, as "New conversation" does now.
+- The list refreshes when a turn's first event arrives, and again when the turn ends. By then the row has been written. Refreshing as the message is sent could be too early.
+- A delete button on each conversation. It asks for confirmation, naming the conversation. Deleting the open one leaves the page as "New conversation" does. The button is off for the open conversation while its answer is running, because the run would write the thread back.
+- If a delete fails, the conversation stays in the list, with a message.
+- An empty state, and an error state with "Try again". A list that fails to load never blocks the chat.
+- The documents that change: ADR 005 (the `conversations` schema), ADR 015 (the web UI gains a third slice in Phase 1), `docs/architecture.md` (the API table and folder layout), `docs/project-rules.md` (the `repositories/` row) and `README.md`.
+
+**Not in this slice**
+
+- Renaming, searching or paging.
+- Undo, or deleting several conversations at once.
+- Stopping a run in another tab. If that tab is mid-answer when the thread is deleted, the run may write part of it back, and it would not be listed.
+- Deleting traces. LangSmith keeps its copy of each run until its own retention ends.
+- A title written by a model.
+- The thread ID in the page's address.
+- A user ID. The list shows every conversation in the database, which is right for one demo user. Phase 7 adds the owner to this table.
+- Listing conversations that already exist. An old thread joins the list when it is next used, titled with that question.
+- Conversations from `scripts/chat.py` and the evals. They do not go through `ChatService`.
+
+**Done when**
+
+- You ask about Apple, press "New conversation" and ask about Nvidia. Both are listed, Nvidia first.
+- You click Apple. Its questions, answers, sources and usage come back, and "And its revenue?" still means Apple. Apple moves to the top, and its title does not change.
+- You restart the API and reload the page. The list is still there.
+- You click another conversation while an answer is streaming. The run stops, and nothing from it appears in the conversation you opened.
+- A conversation whose first answer failed is in the list.
+- You delete a conversation and confirm. It leaves the list, `GET /threads/{id}` returns it empty, and no rows for it remain in the checkpoint tables. The other conversations are untouched.
+- Cancelling the confirmation deletes nothing. Deleting the open conversation leaves an empty chat, and a reload does not bring it back.
+- With Postgres stopped, the list shows an error with "Try again". Once Postgres is back, the list's "Try again" works without restarting the API. This covers the list only: the checkpointer keeps its one long-lived connection.
+- Unit tests cover: the title is cut to length, a second turn keeps the title and moves the time, newest comes first, the limit holds, a failing repository does not stop the answer, delete removes the checkpoints before the row, a failed checkpoint delete keeps the row, and deleting an unknown thread succeeds.
+- An integration test runs the Postgres repository against a real database, including two writes for one new thread at the same time, and a delete that leaves other threads alone.
+- No question text appears in the logs.
+- `make check` and `make web-check` pass.
+
+**Prompt for Claude Code**
+
+> Build Slice 16 of docs/phases/phase-1-spec.md. Read docs/adr/005-postgres-as-system-of-record.md and the rules in docs/project-rules.md first. Check the current psycopg docs for async connections, the current LangGraph docs for deleting a thread, and the current Angular docs for reloading a resource. Write the repository, ChatService and ThreadService tests first. No new dependency. Build nothing under "Not in this slice".
+
+**Explain back**
+
+- Why not list the threads from the checkpoint tables?
+- Why is the row written before the agent runs, and why may that write fail quietly?
+- Two requests create the same thread at once. What stops a duplicate row or an error?
+- Why are the checkpoints deleted before the row?
+- What must change in this table when a second user arrives, and why is it not there yet?
+
+---
+
 ## Break it on purpose
 
-Do these after Slice 15. Write down what happened.
+Do these after Slice 16. Write down what happened.
 
 1. Stop Postgres in the middle of a chat. What does the user see?
 2. Ask for a company that does not exist.
@@ -606,7 +692,7 @@ This is what you show someone in two minutes.
 
 ## Phase exit checklist
 
-- [ ] All 16 slices committed, one commit each.
+- [ ] All 17 slices committed, one commit each.
 - [ ] `make check` passes.
 - [ ] `make web-check` passes.
 - [ ] `make eval` runs and the score is recorded.
