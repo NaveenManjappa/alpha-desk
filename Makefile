@@ -1,4 +1,4 @@
-.PHONY: check eval run setup-db
+.PHONY: check eval run setup-db web web-check
 
 # Format, lint, type-check and unit tests. Run before saying "done".
 check:
@@ -25,3 +25,20 @@ run:
 # Create the checkpoint tables in Postgres. Start it first: docker compose up -d
 setup-db:
 	uv run python scripts/setup_db.py
+
+# Start the web app on http://localhost:4200, reloading when code changes. It sends API
+# calls on to http://localhost:8000, so start the API too: make run
+web: web/node_modules/.package-lock.json
+	cd web && npm start
+
+# Frontend lint, unit tests and a production build. Run before saying "done" on a web change.
+web-check: web/node_modules/.package-lock.json
+	cd web && npm run lint
+	cd web && npm test -- --no-watch --no-progress
+	cd web && npm run build
+
+# Install the web app's packages, on first use and whenever package-lock.json changes. npm
+# writes this hidden file into node_modules, so its age says when the last install was.
+web/node_modules/.package-lock.json: web/package-lock.json
+	cd web && npm ci
+	touch $@

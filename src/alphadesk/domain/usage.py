@@ -5,7 +5,7 @@ is research about a company; usage describes the run that produced it. Keeping t
 means the answer contract stays the same whatever the run cost, and a cached answer in a
 later phase can carry the usage of the run that made it, or none.
 
-The TypeScript models in `web/` will mirror `RunUsage`; change both together.
+The TypeScript models in `web/` mirror `RunUsage`; change both together.
 """
 
 from pydantic import BaseModel, Field

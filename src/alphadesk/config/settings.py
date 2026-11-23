@@ -1,6 +1,7 @@
 """Application settings, loaded from environment variables and an optional `.env` file."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -26,6 +27,11 @@ class Settings(BaseSettings):
 
     environment: Literal["dev", "test", "prod"] = "dev"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    # --- Web UI (ADR 015) ---
+    # The folder holding the built Angular app. Set it and the API serves the app as well.
+    # Leave it unset in development, where the Angular dev server (`make web`) serves it.
+    web_dist_dir: Path | None = None
 
     # --- LLM provider (ADR 014) ---
     llm_provider: LlmProvider = "openai"

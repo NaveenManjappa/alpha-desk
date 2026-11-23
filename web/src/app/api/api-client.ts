@@ -1,0 +1,49 @@
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { inject, Service } from '@angular/core';
+import { catchError, Observable, of, throwError } from 'rxjs';
+
+import { HealthReport } from '../models/health';
+
+/**
+ * Where the API is. Empty means "the same address this page came from": the dev server
+ * proxies API paths (src/proxy.conf.json), and in production the API serves this app.
+ */
+const API_BASE_URL = '';
+
+/** Longer than the API's own Postgres check (5 seconds), so a slow report still arrives. */
+const HEALTH_TIMEOUT_MS = 8_000;
+
+/** The only place that knows the API's address and paths. Components never call HTTP. */
+@Service()
+export class ApiClient {
+  private readonly http = inject(HttpClient);
+
+  /**
+   * Fetch the API's health report.
+   *
+   * A degraded API answers 503 with a report in the body. HttpClient treats every 503 as
+   * an error, so that one is turned back into the report it is. Anything else, such as no
+   * connection, stays an error.
+   */
+  getHealth(): Observable<HealthReport> {
+    return this.http
+      .get<HealthReport>(`${API_BASE_URL}/health`, { timeout: HEALTH_TIMEOUT_MS })
+      .pipe(
+        catchError((error: unknown) => {
+          if (
+            error instanceof HttpErrorResponse &&
+            error.status === 503 &&
+            isHealthReport(error.error)
+          ) {
+            return of(error.error);
+          }
+          return throwError(() => error);
+        }),
+      );
+  }
+}
+
+/** A proxy in front of the API can also answer 503, with a body that is not a report. */
+function isHealthReport(body: unknown): body is HealthReport {
+  return typeof body === 'object' && body !== null && 'status' in body && 'postgres' in body;
+}

@@ -1,4 +1,7 @@
-"""The health report `GET /health` returns."""
+"""The health report `GET /health` returns.
+
+The TypeScript models in `web/` mirror `HealthReport`; change both together.
+"""
 
 from typing import Literal
 

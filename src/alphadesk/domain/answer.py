@@ -6,6 +6,8 @@ It is split in two on purpose:
   docstrings and field descriptions below are written for the model to read.
 - `Answer` adds the fields only code may set: `as_of`, `verified` and `disclaimer`. The
   model never sees them, so it cannot get them wrong or leave them out.
+
+The TypeScript models in `web/` mirror `Answer` and `KeyFigure`; change both together.
 """
 
 from pydantic import AwareDatetime, BaseModel, Field

@@ -12,6 +12,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from langchain_core.tracers.langchain import wait_for_all_tracers
@@ -44,9 +45,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     try:
         async with open_app_services(settings) as services:
             app.state.services = services
+            if settings.web_dist_dir is not None:
+                serve_web_app(app, settings.web_dist_dir)
             logger.info("AlphaDesk API ready. Checkpointer: %s.", settings.checkpointer)
             yield
     finally:
         # Traces are sent from a background thread. Waiting for them blocks, so it runs in
         # a worker thread to keep the event loop free.
         await asyncio.to_thread(wait_for_all_tracers)
+
+
+def serve_web_app(app: FastAPI, directory: Path) -> None:
+    """Serve the built Angular app from this API, so production needs no second host.
+
+    The API's own routes always win: FastAPI looks for a file only when no route matched.
+    A page address with no file behind it gets `index.html`, because the Angular router,
+    not the server, knows the app's pages. A missing script or image is still a 404.
+
+    Args:
+        app: The app to add the files to.
+        directory: The build output, e.g. `web/dist/alphadesk-web/browser`.
+
+    Raises:
+        RuntimeError: `directory` does not hold a built app. Checked at startup, because
+            a wrong folder would otherwise publish whatever files happen to be in it.
+    """
+    if not (directory / "index.html").is_file():
+        raise RuntimeError(
+            f"ALPHADESK_WEB_DIST_DIR is '{directory}', which has no index.html. "
+            "Build the web app first (cd web && npm run build), or leave it unset."
+        )
+    app.frontend("/", directory=directory, fallback="index.html")
