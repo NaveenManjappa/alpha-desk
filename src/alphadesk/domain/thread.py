@@ -1,13 +1,15 @@
-"""A conversation as `GET /threads/{id}` returns it: what the user would have seen.
+"""Conversations, as the API returns them: one in full, or a line in the list.
 
-Not the saved messages themselves. Those also hold tool calls, tool results and the
-grounding check's feedback, which are the agent's working notes.
+A `Thread` is what the user would have seen. Not the saved messages themselves: those
+also hold tool calls, tool results and the grounding check's feedback, which are the
+agent's working notes.
 
 Each message has a `type`, so a client can pick how to show it. A new kind of result in a
 later phase is a new type here. The TypeScript models in `web/` mirror these classes; change
 both together.
 """
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -49,3 +51,17 @@ class Thread(BaseModel):
 
     thread_id: str
     messages: list[ThreadMessage]
+
+
+class ThreadSummary(BaseModel):
+    """One line in the list of conversations, as `GET /threads` returns it.
+
+    Attributes:
+        thread_id: Names the conversation.
+        title: Its first question, cut to length.
+        last_used_at: When its last turn started.
+    """
+
+    thread_id: str
+    title: str
+    last_used_at: datetime

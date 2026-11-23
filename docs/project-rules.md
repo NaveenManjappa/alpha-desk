@@ -20,6 +20,7 @@ These add to `CodingStandards.md`. They are specific to this project.
 | `prompts/` | Prompt text files | Code |
 | `tools/` | Thin tool wrappers the LLM can call | Real logic. That lives in `services/`. |
 | `services/` | Business logic and calculations | LangChain or FastAPI imports |
+| `repositories/` | Reading and writing our own tables. All SQL. | Business rules, HTTP |
 | `integrations/` | Clients for outside APIs (Finnhub, SEC EDGAR) | Business rules |
 | `domain/` | Pydantic models shared across the app | Framework imports |
 | `config/` | Settings | Secrets in code |

@@ -3,7 +3,7 @@ import { inject, Service } from '@angular/core';
 import { catchError, Observable, of, throwError } from 'rxjs';
 
 import { HealthReport } from '../models/health';
-import { Thread } from '../models/thread';
+import { Thread, ThreadSummary } from '../models/thread';
 
 /**
  * Where the API is. Empty means "the same address this page came from": the dev server
@@ -15,6 +15,9 @@ const API_BASE_URL = '';
 const HEALTH_TIMEOUT_MS = 8_000;
 
 const THREAD_TIMEOUT_MS = 10_000;
+
+/** A delete is several statements, each of which the API gives 5 seconds. */
+const DELETE_TIMEOUT_MS = 30_000;
 
 /** The only place that knows the API's address and paths. Components never call HTTP. */
 @Service()
@@ -48,12 +51,26 @@ export class ApiClient {
       );
   }
 
-  /** Fetch a conversation's messages. A thread nobody has used comes back empty. */
-  getThread(threadId: string): Observable<Thread> {
-    return this.http.get<Thread>(`${API_BASE_URL}/threads/${encodeURIComponent(threadId)}`, {
+  /** Fetch the conversations used most recently, newest first. */
+  listThreads(): Observable<ThreadSummary[]> {
+    return this.http.get<ThreadSummary[]>(`${API_BASE_URL}/threads`, {
       timeout: THREAD_TIMEOUT_MS,
     });
   }
+
+  /** Fetch a conversation's messages. A thread nobody has used comes back empty. */
+  getThread(threadId: string): Observable<Thread> {
+    return this.http.get<Thread>(threadUrl(threadId), { timeout: THREAD_TIMEOUT_MS });
+  }
+
+  /** Delete a conversation for good. Deleting one that is already gone succeeds. */
+  deleteThread(threadId: string): Observable<void> {
+    return this.http.delete<void>(threadUrl(threadId), { timeout: DELETE_TIMEOUT_MS });
+  }
+}
+
+function threadUrl(threadId: string): string {
+  return `${API_BASE_URL}/threads/${encodeURIComponent(threadId)}`;
 }
 
 /** A proxy in front of the API can also answer 503, with a body that is not a report. */

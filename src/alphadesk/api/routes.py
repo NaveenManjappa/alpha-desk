@@ -8,16 +8,20 @@ and those calls.
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, StringConstraints
 
 from alphadesk.api.dependencies import AppServices, get_services
+from alphadesk.domain.errors import StorageError
 from alphadesk.domain.health import HealthReport
-from alphadesk.domain.thread import Thread
+from alphadesk.domain.thread import Thread, ThreadSummary
 from alphadesk.services.health import check_health
 
 router = APIRouter()
+
+# The most conversations `GET /threads` returns. There is no paging yet.
+THREAD_LIST_LIMIT = 50
 
 # `Annotated[..., Depends(...)]` tells FastAPI to call `get_services` for each request and
 # pass the result in.
@@ -51,10 +55,34 @@ async def chat(request: ChatRequest, services: Services) -> AsyncIterator[Server
         yield ServerSentEvent(event=event.type, data=event)
 
 
+@router.get("/threads")
+async def threads(services: Services) -> list[ThreadSummary]:
+    """Return the conversations used most recently, newest first. 503 if that fails."""
+    try:
+        return await services.threads.list_recent(THREAD_LIST_LIMIT)
+    except StorageError as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The conversation list is not available right now.",
+        ) from error
+
+
 @router.get("/threads/{thread_id}")
 async def thread(thread_id: ThreadId, services: Services) -> Thread:
     """Return a conversation's questions and answers. A thread nobody has used is empty."""
     return await services.read_thread(thread_id)
+
+
+@router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_thread(thread_id: ThreadId, services: Services) -> None:
+    """Delete a conversation, permanently. One that does not exist is fine. 503 if it fails."""
+    try:
+        await services.thread_service.delete(thread_id)
+    except StorageError as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The conversation could not be deleted right now.",
+        ) from error
 
 
 @router.get("/health")

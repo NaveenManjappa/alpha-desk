@@ -1,6 +1,6 @@
 # AlphaDesk — Architecture
 
-Status: v0.4, updated 16 Nov 2026 (approved 10 Nov 2026). Decisions are recorded in `docs/adr/`. · 10 Nov 2026 · Owner: Naveen Manjappa
+Status: v0.5, updated 23 Nov 2026 (approved 10 Nov 2026). Decisions are recorded in `docs/adr/`. · 10 Nov 2026 · Owner: Naveen Manjappa
 
 AlphaDesk is an AI investment research desk. A team of agents researches US-listed companies, writes cited briefs, and runs a paper-trading portfolio. Every trade needs human approval. All money is simulated and in USD.
 
@@ -239,7 +239,7 @@ A small golden dataset runs in CI. A drop in scores blocks the merge.
 
 | Store | Holds |
 |---|---|
-| Postgres | Checkpoints, long-term memory, portfolio, orders, audit log |
+| Postgres | Checkpoints, the list of conversations, long-term memory, portfolio, orders, audit log |
 | Qdrant | Filing chunks and embeddings |
 | Redis | Tool-result and semantic caches |
 
@@ -250,7 +250,9 @@ Filings pipeline: download from SEC EDGAR, parse, split into chunks that keep ta
 | Endpoint | Purpose |
 |---|---|
 | `POST /chat` | Send a message. Streams progress and the answer. |
+| `GET /threads` | The conversations used most recently, newest first |
 | `GET /threads/{id}` | Conversation history |
+| `DELETE /threads/{id}` | Delete a conversation for good |
 | `GET /approvals` | Orders waiting for a decision |
 | `POST /approvals/{id}` | Approve or reject an order |
 | `GET /portfolio` | Holdings, cash and performance |
@@ -281,6 +283,7 @@ alpha-desk/
     guardrails/
     domain/         # Pydantic models: Brief, OrderProposal, ...
     services/       # portfolio maths, risk calculations
+    repositories/   # our own tables: the only place with SQL
     integrations/   # clients for outside APIs: Finnhub, SEC EDGAR
     config/
   mcp_servers/

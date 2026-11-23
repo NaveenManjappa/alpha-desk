@@ -1,8 +1,9 @@
 """Connections to the Postgres database (ADR 005).
 
-One database holds several concerns, each in its own schema: `checkpoints` now, and later
-`memory`, `portfolio` and `audit`. A connection opened here for a schema finds that
-schema's tables by their plain names, because the schema is put on its `search_path`.
+One database holds several concerns, each in its own schema: `checkpoints` and
+`conversations` now, and later `memory`, `portfolio` and `audit`. A connection opened here
+for a schema finds that schema's tables by their plain names, because the schema is put on
+its `search_path`.
 """
 
 import logging

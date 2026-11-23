@@ -22,7 +22,7 @@ eval:
 run:
 	uv run uvicorn alphadesk.api.app:create_app --factory --reload --port 8000
 
-# Create the checkpoint tables in Postgres. Start it first: docker compose up -d
+# Create the checkpoint and conversation tables in Postgres. Run it again after an update. Start it first: docker compose up -d
 setup-db:
 	uv run python scripts/setup_db.py
 

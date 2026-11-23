@@ -1,13 +1,14 @@
 import { afterRenderEffect, Component, ElementRef, inject, viewChild } from '@angular/core';
 
 import { ChatSession } from './chat-session';
+import { ConversationList } from './conversation-list/conversation-list';
 import { MessageBox } from './message-box/message-box';
 import { MessageList } from './message-list/message-list';
 
-/** The chat page. It lays the conversation out; the state is all in `ChatSession`. */
+/** The chat page: the conversations, and the open one. The state is in the services. */
 @Component({
   selector: 'app-chat-page',
-  imports: [MessageBox, MessageList],
+  imports: [ConversationList, MessageBox, MessageList],
   templateUrl: './chat-page.html',
   styleUrl: './chat-page.css',
 })

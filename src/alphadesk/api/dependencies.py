@@ -23,18 +23,21 @@ from langgraph.graph.state import CompiledStateGraph
 from alphadesk.agents.research_agent import create_research_agent, stream_research_agent
 from alphadesk.config.settings import Settings
 from alphadesk.domain.thread import Thread
-from alphadesk.graph.checkpointer import open_checkpointer
+from alphadesk.graph.checkpointer import delete_checkpoints, open_checkpointer
 from alphadesk.graph.threads import read_thread
 from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
 from alphadesk.integrations.llm import get_chat_model, get_model_price
 from alphadesk.integrations.postgres import postgres_is_reachable
 from alphadesk.integrations.retry import retry_policy_from_settings
 from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter, create_edgar_http_client
+from alphadesk.repositories.postgres_threads import PostgresThreadRepository
+from alphadesk.repositories.threads import InMemoryThreadRepository, ThreadRepository
 from alphadesk.services.chat import ChatService
 from alphadesk.services.filings import FilingsService
 from alphadesk.services.financials import FinancialFactsService
 from alphadesk.services.health import PostgresCheck
 from alphadesk.services.quotes import QuoteService
+from alphadesk.services.threads import ThreadService
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +49,15 @@ class AppServices:
     Attributes:
         chat: Runs chat turns.
         read_thread: Reads a conversation by its thread ID.
+        threads: The list of conversations.
+        thread_service: Deletes conversations.
         check_postgres: Pings Postgres, or None when no Postgres URL is set.
     """
 
     chat: ChatService
     read_thread: Callable[[str], Awaitable[Thread]]
+    threads: ThreadRepository
+    thread_service: ThreadService
     check_postgres: PostgresCheck | None
 
 
@@ -69,18 +76,29 @@ async def open_app_services(settings: Settings) -> AsyncGenerator[AppServices]:
         open_checkpointer(settings) as checkpointer,
         open_research_agent(settings, checkpointer) as agent,
     ):
+        threads = create_thread_repository(settings)
         yield AppServices(
             # `partial` fills in the agent and its model's price, leaving the
             # (message, thread_id) function that ChatService expects. ChatService never
             # sees the agent itself.
             chat=ChatService(
-                partial(stream_research_agent, agent, price=get_model_price("small", settings))
+                partial(stream_research_agent, agent, price=get_model_price("small", settings)),
+                threads,
             ),
             read_thread=partial(read_thread, agent),
+            threads=threads,
+            thread_service=ThreadService(threads, partial(delete_checkpoints, checkpointer)),
             check_postgres=(
                 partial(postgres_is_reachable, settings) if settings.postgres_url else None
             ),
         )
+
+
+def create_thread_repository(settings: Settings) -> ThreadRepository:
+    """The list of conversations, kept in the same kind of place as the conversations."""
+    if settings.checkpointer == "memory":
+        return InMemoryThreadRepository()
+    return PostgresThreadRepository(settings)
 
 
 @asynccontextmanager

@@ -1,6 +1,6 @@
 # ADR 015: Angular for the web UI, starting at the end of Phase 1
 
-Status: Accepted · 16 Nov 2026
+Status: Accepted · 16 Nov 2026 · third slice added 23 Nov 2026 (Phase 1, Slice 16)
 
 ## Context
 
@@ -21,11 +21,11 @@ The owner has long Angular experience, so an Angular app is quick to build and a
 
 ## Decision
 
-Build the web UI in Angular, in a `web/` folder. The first version is built in the last two slices of Phase 1.
+Build the web UI in Angular, in a `web/` folder. The first version is built in Slices 14 and 15 of Phase 1. Slice 16 adds a list of earlier conversations.
 
 - **Local development:** the Angular dev server, with a proxy to the API. No CORS setup is needed.
 - **Production build:** static files, served by the API container. No extra hosting.
-- **Scope of the first version:** chat, live status lines, and the cited answer. It is capped at two to three days of work.
+- **Scope of the first version:** chat, live status lines, and the cited answer. It is capped at two to three days of work. Slice 16, finding and deleting earlier conversations, has its own cap of one day.
 
 ## Consequences
 

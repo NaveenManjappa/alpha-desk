@@ -22,5 +22,6 @@ const api = {
 
 export default {
   '^/(chat|health)$': api,
-  '^/threads/': api,
+  // With the slash or without it: the list is /threads, one conversation is /threads/{id}.
+  '^/threads(/|$)': api,
 };

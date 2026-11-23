@@ -1,6 +1,34 @@
 :host {
   display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* Beside the chat, in view while the chat scrolls. A long list scrolls by itself. */
+app-conversation-list {
+  position: sticky;
+  top: 1.5rem;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+}
+
+/* Above the chat, and short enough that the chat stays in reach. */
+@media (max-width: 48rem) {
+  :host {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  app-conversation-list {
+    position: static;
+    max-height: 14rem;
+  }
+}
+
+.chat {
+  display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .title {

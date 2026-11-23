@@ -3,7 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 
 import { HealthReport } from '../models/health';
-import { Thread } from '../models/thread';
+import { Thread, ThreadSummary } from '../models/thread';
+import { APPLE_THREAD } from '../testing/samples';
 import { ApiClient } from './api-client';
 
 describe('ApiClient', () => {
@@ -63,5 +64,34 @@ describe('ApiClient', () => {
     http.expectOne({ method: 'GET', url: '/threads/a%2Fb' }).flush(thread);
 
     await expect(result).resolves.toEqual(thread);
+  });
+
+  it('lists the conversations', async () => {
+    const list: ThreadSummary[] = [APPLE_THREAD];
+    const result = firstValueFrom(client.listThreads());
+
+    http.expectOne({ method: 'GET', url: '/threads' }).flush(list);
+
+    await expect(result).resolves.toEqual(list);
+  });
+
+  it('deletes a thread by its ID', async () => {
+    const result = firstValueFrom(client.deleteThread('a/b'));
+
+    http
+      .expectOne({ method: 'DELETE', url: '/threads/a%2Fb' })
+      .flush(null, { status: 204, statusText: 'No Content' });
+
+    await expect(result).resolves.toBeNull();
+  });
+
+  it('fails when a thread could not be deleted', async () => {
+    const result = firstValueFrom(client.deleteThread('a'));
+
+    http
+      .expectOne('/threads/a')
+      .flush({ detail: 'no' }, { status: 503, statusText: 'Service Unavailable' });
+
+    await expect(result).rejects.toMatchObject({ status: 503 });
   });
 });

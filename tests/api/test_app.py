@@ -17,7 +17,9 @@ from alphadesk.api.dependencies import AppServices
 from alphadesk.config.settings import Settings
 from alphadesk.domain.chat_events import FinalEvent, ProgressEvent
 from alphadesk.domain.thread import Thread
+from alphadesk.repositories.threads import InMemoryThreadRepository
 from alphadesk.services.chat import ChatService
+from alphadesk.services.threads import ThreadService
 
 # What a browser sends when it asks for a page, rather than for a script or an image.
 PAGE_REQUEST = {"accept": "text/html"}
@@ -32,9 +34,20 @@ async def _no_thread(thread_id: str) -> Thread:
     raise NotImplementedError("these tests never read a thread")
 
 
+async def _no_delete(thread_id: str) -> None:
+    raise NotImplementedError("these tests never delete a thread")
+
+
 @asynccontextmanager
 async def _fake_services(settings: Settings) -> AsyncGenerator[AppServices]:
-    yield AppServices(chat=ChatService(_no_answer), read_thread=_no_thread, check_postgres=None)
+    threads = InMemoryThreadRepository()
+    yield AppServices(
+        chat=ChatService(_no_answer, threads),
+        read_thread=_no_thread,
+        threads=threads,
+        thread_service=ThreadService(threads, _no_delete),
+        check_postgres=None,
+    )
 
 
 @pytest.fixture

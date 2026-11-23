@@ -24,3 +24,10 @@ export interface Thread {
   thread_id: string;
   messages: ThreadMessage[];
 }
+
+/** One line in the list `GET /threads` returns. */
+export interface ThreadSummary {
+  thread_id: string;
+  title: string;
+  last_used_at: string;
+}

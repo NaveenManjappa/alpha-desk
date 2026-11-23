@@ -16,16 +16,21 @@ There are two kinds, chosen by the `checkpointer` setting:
 Both have the same interface, so the agent does not know or care which one it has.
 """
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+import psycopg
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from alphadesk.config.settings import Settings
+from alphadesk.domain.errors import StorageError
 from alphadesk.integrations.postgres import connect_to_postgres, create_schema
+
+logger = logging.getLogger(__name__)
 
 # The Postgres schema that holds the checkpoint tables (ADR 005: one schema per concern).
 CHECKPOINT_SCHEMA = "checkpoints"
@@ -70,6 +75,26 @@ async def open_checkpointer(settings: Settings) -> AsyncGenerator[BaseCheckpoint
         return
     async with connect_to_postgres(settings, CHECKPOINT_SCHEMA) as connection:
         yield AsyncPostgresSaver(connection, serde=_serializer())
+
+
+async def delete_checkpoints(checkpointer: BaseCheckpointSaver, thread_id: str) -> None:
+    """Delete everything saved for a thread. A thread with nothing saved is not an error.
+
+    Args:
+        checkpointer: Where the agent saves its threads.
+        thread_id: Names the conversation.
+
+    Raises:
+        StorageError: The database could not be reached, or failed. Some of the thread's
+            rows may be gone already; calling again removes the rest.
+    """
+    try:
+        await checkpointer.adelete_thread(thread_id)
+    except psycopg.Error as error:
+        # The error's type only: its message can include the host and user name.
+        name = type(error).__name__
+        logger.warning("Checkpoints of thread %s could not be deleted: %s.", thread_id, name)
+        raise StorageError(name) from error
 
 
 async def setup_checkpointer(settings: Settings) -> None:

@@ -39,7 +39,7 @@ make check             # creates .venv, installs dependencies, runs all checks
 | `make run` | Starts the API on http://localhost:8000. Interactive docs at `/docs`. |
 | `make web` | Starts the web app on http://localhost:4200. Needs the API running too. |
 | `make web-check` | Lints, tests and builds the web app. Run it before committing a change in `web/`. |
-| `make setup-db` | Creates the checkpoint tables in Postgres. Safe to run again. |
+| `make setup-db` | Creates the checkpoint and conversation tables in Postgres. Safe to run again. |
 
 `make check` runs these four commands in order and stops at the first failure:
 
@@ -56,8 +56,10 @@ Conversation memory is saved in Postgres when `ALPHADESK_CHECKPOINTER=postgres` 
 
 ```bash
 docker compose up -d   # Postgres on localhost:5433; data kept in a Docker volume
-make setup-db          # creates the `checkpoints` schema and tables
+make setup-db          # creates the `checkpoints` and `conversations` schemas and tables
 ```
+
+Run `make setup-db` again after an update that adds tables. Until then chat works, but the list of conversations shows an error.
 
 With `ALPHADESK_CHECKPOINTER=memory`, nothing needs Docker, but memory is lost when the program exits. Unit tests always use memory. To run the Postgres integration tests:
 
@@ -79,7 +81,9 @@ curl -N -X POST http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
   -d '{"message": "What is Apple'\''s share price?", "thread_id": "demo"}'
 
+curl http://localhost:8000/threads        # the 50 conversations used most recently
 curl http://localhost:8000/threads/demo   # the conversation so far: questions and answers
+curl -X DELETE http://localhost:8000/threads/demo   # delete it, permanently
 
 curl -i http://localhost:8000/health   # 503 if Postgres is configured but unreachable
 ```
@@ -95,7 +99,7 @@ make web   # the Angular dev server, on port 4200
 
 `make web` installs the packages on first use. The dev server passes API calls on to port 8000 (see [proxy.conf.mjs](web/src/proxy.conf.mjs)), so the browser sees one address and no CORS setup is needed. A new API path must be added to that file.
 
-The page keeps only the conversation's ID, in the browser's local storage. After a reload, the messages come from `GET /threads/{id}`. "New conversation" forgets the ID.
+The page keeps only the conversation's ID, in the browser's local storage. After a reload, the messages come from `GET /threads/{id}`. "New conversation" forgets the ID; the conversation stays in the list beside the chat, from `GET /threads`, until it is deleted there. The list starts with the first conversation after Slice 16: an older one joins it when it is next used.
 
 In production the API serves the built app itself, from one address:
 

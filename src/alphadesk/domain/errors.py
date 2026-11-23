@@ -34,3 +34,11 @@ class RunLimitError(Exception):
     The limit protects against a model that keeps calling tools and never answers, which
     would otherwise spend tokens without end.
     """
+
+
+class StorageError(Exception):
+    """Our own database could not be reached, or refused a statement.
+
+    The message names the kind of failure only. Database errors can quote the host, or the
+    row being written and so the user's question, and neither belongs in a log.
+    """

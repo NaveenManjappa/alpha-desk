@@ -1,7 +1,7 @@
 /** Sample data for the tests, shaped exactly as the API sends it. Never part of the app. */
 
 import { Answer } from '../models/answer';
-import { AnswerMessage } from '../models/thread';
+import { AnswerMessage, ThreadSummary } from '../models/thread';
 import { RunUsage } from '../models/usage';
 
 export const ANSWER: Answer = {
@@ -37,3 +37,15 @@ export const USAGE: RunUsage = {
 };
 
 export const ANSWER_MESSAGE: AnswerMessage = { type: 'answer', answer: ANSWER, usage: USAGE };
+
+export const APPLE_THREAD: ThreadSummary = {
+  thread_id: 'apple',
+  title: 'How is Apple doing?',
+  last_used_at: '2026-11-23T10:00:00Z',
+};
+
+export const NVIDIA_THREAD: ThreadSummary = {
+  thread_id: 'nvidia',
+  title: 'How is Nvidia doing?',
+  last_used_at: '2026-11-23T11:00:00Z',
+};

@@ -3,12 +3,22 @@ integration tests in test_checkpointer_postgres.py."""
 
 import logging
 
+import psycopg
 import pytest
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import START, MessagesState, StateGraph
 
 from alphadesk.config.settings import Settings
 from alphadesk.domain.answer import AnswerDraft
-from alphadesk.graph.checkpointer import create_checkpointer, open_checkpointer, setup_checkpointer
+from alphadesk.domain.errors import StorageError
+from alphadesk.graph.checkpointer import (
+    create_checkpointer,
+    delete_checkpoints,
+    open_checkpointer,
+    setup_checkpointer,
+)
 
 
 def _settings(**overrides: object) -> Settings:
@@ -49,3 +59,38 @@ async def test_memory_setting_opens_an_in_memory_checkpointer() -> None:
 async def test_setup_without_a_postgres_url_names_the_setting() -> None:
     with pytest.raises(ValueError, match="ALPHADESK_POSTGRES_URL"):
         await setup_checkpointer(_settings())
+
+
+def _config(thread_id: str) -> RunnableConfig:
+    return {"configurable": {"thread_id": thread_id}}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_delete_removes_one_thread_and_leaves_the_others() -> None:
+    checkpointer = create_checkpointer()
+    builder = StateGraph(MessagesState)
+    builder.add_node("reply", lambda state: {"messages": []})
+    builder.add_edge(START, "reply")
+    graph = builder.compile(checkpointer=checkpointer)
+    for thread_id in ("apple", "nvidia"):
+        await graph.ainvoke({"messages": [HumanMessage("Hi")]}, _config(thread_id))
+
+    await delete_checkpoints(checkpointer, "apple")
+    await delete_checkpoints(checkpointer, "nobody")
+
+    assert (await graph.aget_state(_config("apple"))).values == {}
+    assert len((await graph.aget_state(_config("nvidia"))).values["messages"]) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_failed_delete_becomes_a_storage_error_without_the_details() -> None:
+    class BrokenSaver(InMemorySaver):
+        async def adelete_thread(self, thread_id: str) -> None:
+            raise psycopg.OperationalError("on host db.internal")
+
+    with pytest.raises(StorageError) as caught:
+        await delete_checkpoints(BrokenSaver(), "apple")
+
+    assert str(caught.value) == "OperationalError"

@@ -1,10 +1,11 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { ThreadMessage } from '../models/thread';
+import { ThreadMessage, ThreadSummary } from '../models/thread';
 import { ANSWER_MESSAGE } from '../testing/samples';
 import { ChatPage } from './chat-page';
 import { ChatSession } from './chat-session';
+import { Conversations } from './conversations';
 
 describe('ChatPage', () => {
   const session = {
@@ -15,9 +16,15 @@ describe('ChatPage', () => {
     loadingHistory: signal(false),
     historyFailed: signal(false),
     canSend: signal(true),
+    threadId: signal<string | undefined>(undefined),
     send: vi.fn(),
     startNewConversation: vi.fn(),
     reloadHistory: vi.fn(),
+  };
+  const conversations = {
+    list: signal<ThreadSummary[] | undefined>([]),
+    failed: signal(false),
+    deleteFailure: signal<string | undefined>(undefined),
   };
   let fixture: ComponentFixture<ChatPage>;
   let host: HTMLElement;
@@ -30,9 +37,13 @@ describe('ChatPage', () => {
     session.running.set(false);
     session.loadingHistory.set(false);
     session.historyFailed.set(false);
+    conversations.failed.set(false);
     vi.clearAllMocks();
     TestBed.configureTestingModule({
-      providers: [{ provide: ChatSession, useValue: session }],
+      providers: [
+        { provide: ChatSession, useValue: session },
+        { provide: Conversations, useValue: conversations },
+      ],
     });
     fixture = TestBed.createComponent(ChatPage);
     host = fixture.nativeElement;
@@ -67,7 +78,19 @@ describe('ChatPage', () => {
     session.failure.set('The connection was lost.');
     await fixture.whenStable();
 
-    expect(host.querySelector('[role=alert]')?.textContent).toContain('The connection was lost.');
+    expect(host.querySelector('.chat [role=alert]')?.textContent).toContain(
+      'The connection was lost.',
+    );
+  });
+
+  it('still takes a message when the list of conversations fails to load', async () => {
+    conversations.failed.set(true);
+    await fixture.whenStable();
+
+    expect(host.querySelector('app-conversation-list')?.textContent).toContain(
+      'could not be loaded',
+    );
+    expect(button('Send')?.disabled).toBe(false);
   });
 
   it('offers to load the conversation again when that failed', async () => {
