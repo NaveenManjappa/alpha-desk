@@ -17,7 +17,8 @@ def make_get_financial_facts_tool(service: FinancialFactsService) -> BaseTool:
     async def get_financial_facts(ticker: str) -> dict[str, Any]:
         """Get revenue, net income and diluted EPS for a company's last three fiscal years.
 
-        Figures are annual, from the US-listed company's SEC 10-K filings. Use it for
+        Figures are annual only, from the US-listed company's SEC 10-K filings. It has no
+        quarterly figures. Use it for
         questions about revenue, sales, profit, earnings or EPS, or how they changed over
         the years. Do not use it for the share price, or to list filings.
         Returns a list of facts, each with metric, value, unit, period_start, period_end and

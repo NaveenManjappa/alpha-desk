@@ -21,7 +21,8 @@ def make_list_recent_filings_tool(service: FilingsService) -> BaseTool:
         reports. Returns, newest first, its latest 10-K (annual report), latest 10-Q
         (quarterly report) and up to five latest 8-Ks (event notices). Each has form,
         filing_date, report_date and url. It does not read what the filings say, and it
-        gives no financial figures: use get_financial_facts for those.
+        gives no financial figures: use get_financial_facts for annual ones. No tool has
+        quarterly ones, so calling this again will not find them.
         On failure it returns error_type and message instead; tell the user, do not guess.
 
         Args:

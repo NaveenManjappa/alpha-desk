@@ -21,6 +21,9 @@ checkpoint.
 The checkpoint keeps the whole thread, but each model call is sent only the most recent
 part of it that fits the history budget (`graph/history.py`).
 
+A tool call the model already made is not run again, and a model that keeps repeating is
+made to answer (`graph/repeated_calls.py`).
+
 Each run may call the model at most `max_model_calls` times. A model that keeps calling
 tools without answering is stopped with `RunLimitError` instead of spending tokens
 forever. The check runs before each model call, so a stopped thread never ends on a tool
@@ -74,6 +77,7 @@ from alphadesk.domain.thread import AnswerMessage
 from alphadesk.domain.tool_results import ToolResult
 from alphadesk.domain.usage import ModelPrice, RunUsage
 from alphadesk.graph.history import TrimHistoryMiddleware
+from alphadesk.graph.repeated_calls import RepeatedToolCallMiddleware
 from alphadesk.graph.threads import ANSWER_TOOL, desk_message
 from alphadesk.services.answers import finalise_answer
 from alphadesk.services.filings import FilingsService
@@ -172,6 +176,8 @@ def create_research_agent(
         # Counts model calls in this run and raises before one call too many. "error"
         # rather than "end": "end" would save a fake model message into the thread.
         ModelCallLimitMiddleware(run_limit=max_model_calls, exit_behavior="error"),
+        # Refuses a tool call that was already made, and ends a run of them with an answer.
+        RepeatedToolCallMiddleware(),
         # Trims what the model is sent, not what the checkpointer saves.
         TrimHistoryMiddleware(history_max_tokens),
     ]

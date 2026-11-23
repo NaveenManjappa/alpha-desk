@@ -11,7 +11,9 @@ from pydantic import AwareDatetime, BaseModel
 
 from alphadesk.domain.filings import Filing
 
-ToolErrorType = Literal["invalid_input", "not_found", "upstream_error", "unavailable"]
+ToolErrorType = Literal[
+    "invalid_input", "not_found", "upstream_error", "unavailable", "repeated_call"
+]
 
 
 class ToolError(BaseModel):
@@ -22,7 +24,8 @@ class ToolError(BaseModel):
             input was well formed but no such thing exists; "upstream_error" means the
             data provider failed, and trying again later may work; "unavailable" means
             the data source is not set up or refused our credentials, so trying again
-            will not help until someone fixes the configuration.
+            will not help until someone fixes the configuration; "repeated_call" means the
+            same call was already made, so it was not run again.
         message: A plain sentence for the model, written by us, never copied from upstream.
         source_url: The address that was called, if the call got that far.
         as_of: When the failure happened (UTC).

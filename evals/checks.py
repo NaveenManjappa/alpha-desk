@@ -52,6 +52,8 @@ def exact_checks(
 
     checks = [check_verified(answer)]
     checks += [check_tool_called(tools_called, tool) for tool in case.expected_tools]
+    if case.forbid_repeated_tools:
+        checks.append(check_no_repeated_tools(tools_called))
     if case.forbid_data_tools:
         checks.append(check_no_data_tools(tools_called))
     checks += [
@@ -83,6 +85,14 @@ def check_tool_called(tools_called: Sequence[str], tool: str) -> Check:
     """The expected data tool was called in this turn."""
     name = f"called {tool}"
     if tool in tools_called:
+        return Check(name=name, passed=True)
+    return Check(name=name, passed=False, detail=f"Tools called: {_list_or_none(tools_called)}.")
+
+
+def check_no_repeated_tools(tools_called: Sequence[str]) -> Check:
+    """No data tool was asked for twice. A refused repeat counts: the model still asked."""
+    name = "no repeated tool call"
+    if len(set(tools_called)) == len(tools_called):
         return Check(name=name, passed=True)
     return Check(name=name, passed=False, detail=f"Tools called: {_list_or_none(tools_called)}.")
 

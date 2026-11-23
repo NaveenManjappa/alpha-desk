@@ -59,6 +59,7 @@ class ScriptedChatModel(GenericFakeChatModel):
 
     calls: list[list[BaseMessage]] = Field(default_factory=list)
     tool_names: list[str] = Field(default_factory=list)
+    tool_names_per_call: list[list[str]] = Field(default_factory=list)
 
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> "ScriptedChatModel":
         self.tool_names = [tool.name for tool in tools]
@@ -66,6 +67,7 @@ class ScriptedChatModel(GenericFakeChatModel):
 
     def _generate(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Any:
         self.calls.append(list(messages))
+        self.tool_names_per_call.append(self.tool_names)
         return super()._generate(messages, *args, **kwargs)
 
     def _stream(
@@ -854,3 +856,112 @@ async def test_a_run_cut_off_during_a_tool_does_not_break_the_thread() -> None:
         "question",
         "answer",
     ]
+
+
+# --- Repeated tool calls ----------------------------------------------------------------
+
+
+class CountingQuotes:
+    """A fake Finnhub that counts how often it is asked, and may fail the first few times."""
+
+    def __init__(self, failures: int = 0) -> None:
+        self.requests = 0
+        self._failures = failures
+
+    def service(self) -> QuoteService:
+        http = httpx.AsyncClient(
+            base_url="https://finnhub.io/api/v1", transport=httpx.MockTransport(self._answer)
+        )
+        return QuoteService(FinnhubClient(http, NO_RETRIES))
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
+        self.requests += 1
+        if self.requests <= self._failures:
+            raise httpx.ReadTimeout("too slow", request=request)
+        return httpx.Response(200, json={"c": 227.5, "d": 1.25, "dp": 0.55, "t": 1_762_966_800})
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_repeated_tool_call_is_not_run_and_the_model_is_told_to_answer() -> None:
+    quotes = CountingQuotes()
+    model = _model(_quote_call("q1"), _quote_call("q2"), _apple_answer("a1"))
+    agent = _agent(model, create_checkpointer(), quote_service=quotes.service())
+
+    run = await _run(agent, "Apple price?", "t1")
+
+    assert quotes.requests == 1
+    refusal = json.loads(model.calls[2][-1].text)
+    assert refusal["error_type"] == "repeated_call"
+    assert "get_quote" in refusal["message"]
+    # The first result still grounds the answer. A refusal is not evidence, and not a failure.
+    assert run.answer.verified is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_model_that_keeps_repeating_is_left_only_the_answer_tool() -> None:
+    quotes = CountingQuotes()
+    model = _model(_quote_call("q1"), _quote_call("q2"), _quote_call("q3"), _apple_answer("a1"))
+    agent = _agent(model, create_checkpointer(), quote_service=quotes.service())
+
+    run = await _run(agent, "Apple price?", "t1")
+
+    assert run.answer.summary == "Apple's shares are up slightly today."
+    assert quotes.requests == 1
+    # A first repeat is only refused. After a second, the data tools are gone.
+    assert "get_quote" in model.tool_names_per_call[2]
+    assert model.tool_names_per_call[3] == ["AnswerDraft"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_the_next_question_may_fetch_the_same_data_again_with_every_tool() -> None:
+    quotes = CountingQuotes()
+    model = _model(
+        *[_quote_call("q1"), _quote_call("q2"), _quote_call("q3"), _apple_answer("a1")],
+        *[_quote_call("q4"), _apple_answer("a2")],
+    )
+    agent = _agent(model, create_checkpointer(), quote_service=quotes.service())
+
+    await _run(agent, "Apple price?", "t1")
+    run = await _run(agent, "And now?", "t1")
+
+    assert quotes.requests == 2
+    assert "get_quote" in model.tool_names_per_call[4]
+    assert run.answer.verified is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_the_model_may_retry_a_tool_once_after_the_provider_failed() -> None:
+    quotes = CountingQuotes(failures=1)
+    model = _model(_quote_call("q1"), _quote_call("q2"), _apple_answer("a1"))
+    agent = _agent(model, create_checkpointer(), quote_service=quotes.service())
+
+    run = await _run(agent, "Apple price?", "t1")
+
+    assert quotes.requests == 2
+    assert run.answer.verified is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_provider_that_stays_down_is_asked_twice_and_no_more() -> None:
+    quotes = CountingQuotes(failures=99)
+    # Two answers: the first one's price has nothing to support it, so grounding asks again.
+    model = _model(
+        *[_quote_call(f"q{n}") for n in range(1, 5)], _apple_answer("a1"), _apple_answer("a2")
+    )
+    agent = _agent(model, create_checkpointer(), quote_service=quotes.service())
+
+    await _run(agent, "Apple price?", "t1")
+
+    assert quotes.requests == 2
+    assert json.loads(model.calls[3][-1].text)["error_type"] == "repeated_call"
+    assert model.tool_names_per_call[4] == ["AnswerDraft"]
+
+
+@pytest.mark.unit
+def test_prompt_says_there_are_no_quarterly_figures() -> None:
+    assert "no tool gives quarterly figures" in load_system_prompt().lower()

@@ -92,6 +92,14 @@ def test_an_off_topic_answer_must_call_no_tool_and_give_no_figure() -> None:
     assert not bad["called no data tool"].passed and not bad["no key figures"].passed
 
 
+def test_asking_for_the_same_tool_twice_fails() -> None:
+    case = _case(forbid_repeated_tools=True)
+    once = _by_name(exact_checks(case, _answer(), ["get_quote", "list_recent_filings"]))
+    twice = _by_name(exact_checks(case, _answer(), ["get_quote", "get_quote"]))
+    assert once["no repeated tool call"].passed
+    assert not twice["no repeated tool call"].passed
+
+
 def test_too_few_key_figures_fails() -> None:
     checks = _by_name(exact_checks(_case(min_key_figures=1), _answer(), []))
     assert not checks["at least 1 key figure(s)"].passed

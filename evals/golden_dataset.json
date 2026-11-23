@@ -51,6 +51,17 @@
       "expected_figures": [{ "description": "Apple FY2024 net income, USD", "value": 93736000000 }]
     },
     {
+      "id": "follow_up_nvidia_quarter",
+      "setup": ["What is the latest news about Nvidia?"],
+      "question": "What is its latest quarterly performance?",
+      "good_answer": "Says plainly that quarterly figures are not available, links Nvidia's latest 10-Q, and gives no number. Asks for the filings once.",
+      "expected_tools": ["list_recent_filings"],
+      "forbid_repeated_tools": true,
+      "expect_no_key_figures": true,
+      "expected_source_fragment": "sec.gov",
+      "judge_relevancy": false
+    },
+    {
       "id": "unknown_ticker",
       "question": "What is the share price of QZXWV?",
       "good_answer": "Says plainly that no company or price was found for QZXWV, and gives no number.",

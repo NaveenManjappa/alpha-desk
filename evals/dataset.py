@@ -36,6 +36,8 @@ class GoldenCase(BaseModel):
             rely on memory (a follow-up).
         good_answer: What a good answer needs, in words. For people reading the results.
         expected_tools: Data tools that must be called this turn.
+        forbid_repeated_tools: True if no data tool may be called twice. Only for a question
+            about one company, where a second call to the same tool fetches nothing new.
         forbid_data_tools: True if no data tool may be called (an off-topic question).
         expected_figures: Figures the answer must contain, exactly.
         min_key_figures: The answer must have at least this many key figures. For
@@ -53,6 +55,7 @@ class GoldenCase(BaseModel):
     setup: list[str] = []
     good_answer: str = Field(min_length=1)
     expected_tools: list[DataTool] = []
+    forbid_repeated_tools: bool = False
     forbid_data_tools: bool = False
     expected_figures: list[ExpectedFigure] = []
     min_key_figures: int = Field(default=0, ge=0)
