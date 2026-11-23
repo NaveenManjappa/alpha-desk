@@ -35,7 +35,10 @@ class KeyFigure(BaseModel):
 
 
 class AnswerDraft(BaseModel):
-    """Your final answer to the user. Call this once you have the data you need.
+    """Your final answer to the user, and your only way to reply.
+
+    Call this once you have the data you need, or straight away when no data tool can
+    help, such as a question that is not about a US-listed company.
 
     Every number goes in key_figures, never in the summary.
     """

@@ -32,20 +32,14 @@ from langgraph.graph.state import CompiledStateGraph
 from alphadesk.agents.research_agent import (
     NoAnswerError,
     ask_research_agent,
-    create_research_agent,
 )
+from alphadesk.api.dependencies import open_research_agent
 from alphadesk.config.settings import get_settings
 from alphadesk.domain.errors import RunLimitError
 from alphadesk.domain.usage import ModelPrice
 from alphadesk.graph.checkpointer import open_checkpointer
-from alphadesk.integrations.finnhub import FinnhubClient, create_finnhub_http_client
-from alphadesk.integrations.llm import get_chat_model, get_model_price
-from alphadesk.integrations.retry import retry_policy_from_settings
-from alphadesk.integrations.sec_edgar import EdgarClient, RateLimiter, create_edgar_http_client
+from alphadesk.integrations.llm import get_model_price
 from alphadesk.integrations.tracing import configure_tracing
-from alphadesk.services.filings import FilingsService
-from alphadesk.services.financials import FinancialFactsService
-from alphadesk.services.quotes import QuoteService
 
 logger = logging.getLogger(__name__)
 
@@ -167,26 +161,11 @@ async def main(thread_id: str) -> None:
     configure_tracing(settings)  # before the first model call: LangSmith caches its settings
 
     async with (
-        create_finnhub_http_client(settings) as finnhub_http,
-        create_edgar_http_client(settings) as edgar_http,
         # One checkpointer for the whole session: every thread's memory lives in it.
         open_checkpointer(settings) as checkpointer,
+        open_research_agent(settings, checkpointer) as agent,
     ):
         logger.info("Checkpointer: %s.", settings.checkpointer)
-        retry = retry_policy_from_settings(settings)
-        # One EDGAR client (and so one rate limiter) shared by both EDGAR tools.
-        edgar = EdgarClient(
-            edgar_http, RateLimiter(settings.sec_edgar_max_requests_per_second), retry
-        )
-        agent = create_research_agent(
-            model=get_chat_model("small", settings),
-            quote_service=QuoteService(FinnhubClient(finnhub_http, retry)),
-            financial_facts_service=FinancialFactsService(edgar),
-            filings_service=FilingsService(edgar),
-            history_max_tokens=settings.history_max_tokens,
-            max_model_calls=settings.agent_max_model_calls,
-            checkpointer=checkpointer,
-        )
         await _chat(agent, thread_id, get_model_price("small", settings))
 
 

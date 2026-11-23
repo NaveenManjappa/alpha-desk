@@ -33,18 +33,23 @@ target-version = "py313"
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.pyright]
-include = ["src", "tests", "scripts"]
+include = ["src", "tests", "scripts", "evals"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# evals/ holds the evals and the unit tests of the eval code. The evals themselves are
+# marked `eval`, so `-m 'not eval'` leaves them out of `make check`; `make eval` runs them.
+testpaths = ["tests", "evals"]
+# The repo root on sys.path, so evals/ can import its own modules as the `evals` package.
+pythonpath = ["."]
 # importlib mode lets tests/ mirror src/ without __init__.py files or name clashes.
-# Evals call a real LLM, so they are excluded by default and run only via `make eval`.
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--strict-markers --import-mode=importlib -m 'not eval'"
+# `-p no:deepeval` turns off the pytest plugin DeepEval installs. It only serves
+# `deepeval test run`, which we do not use, and it would otherwise load in every run.
+addopts = "--strict-markers --import-mode=importlib -p no:deepeval -m 'not eval'"
 markers = [
     "unit: fast tests with no network, database or LLM calls",
     "integration: tests that cross a real boundary (API, database, external service)",
@@ -53,6 +58,7 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "deepeval>=4.3.4",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.5.0",

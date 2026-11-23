@@ -36,18 +36,12 @@ def get_chat_model(tier: ModelTier, settings: Settings) -> BaseChatModel:
         endpoint = settings.azure_openai_endpoint or ""
         base_url = endpoint.rstrip("/") + "/openai/v1/"
         api_key = settings.azure_openai_api_key
-        model = (
-            settings.azure_openai_deployment_small
-            if tier == "small"
-            else settings.azure_openai_deployment_large
-        )
     else:
         base_url = None  # None means OpenAI's own API
         api_key = settings.openai_api_key
-        model = settings.openai_model_small if tier == "small" else settings.openai_model_large
 
     return ChatOpenAI(
-        model=model or "",
+        model=get_model_name(tier, settings),
         base_url=base_url,
         api_key=api_key,
         timeout=settings.llm_timeout_seconds,
@@ -58,6 +52,27 @@ def get_chat_model(tier: ModelTier, settings: Settings) -> BaseChatModel:
         # itself only for OpenAI's own URL, so without it Azure runs would report zero.
         stream_usage=True,
     )
+
+
+def get_model_name(tier: ModelTier, settings: Settings) -> str:
+    """The model a tier runs on: an OpenAI model name, or an Azure deployment name.
+
+    The one place that maps a tier to its setting. `get_chat_model` uses it, and so does
+    anything that reports which model ran, such as the eval results, so the two agree.
+
+    Returns:
+        The name, or "" if the setting is missing. The settings validator rejects a
+        missing name at startup, so "" only appears with hand-built settings in tests.
+    """
+    if settings.llm_provider == "azure_openai":
+        name = (
+            settings.azure_openai_deployment_small
+            if tier == "small"
+            else settings.azure_openai_deployment_large
+        )
+    else:
+        name = settings.openai_model_small if tier == "small" else settings.openai_model_large
+    return name or ""
 
 
 def get_model_price(tier: ModelTier, settings: Settings) -> ModelPrice:

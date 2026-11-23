@@ -7,7 +7,7 @@ dependencies, which is what lets the tests swap any of them for a fake.
 
 The clients and the checkpointer hold open connections, so they are opened in a context
 manager that lives as long as the app (see `lifespan` in `api/app.py`) and closed on
-shutdown.
+shutdown. `open_research_agent` builds just the agent, for the chat script and the evals.
 """
 
 import logging
@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from functools import partial
 
 from fastapi import Request
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph.state import CompiledStateGraph
 
 from alphadesk.agents.research_agent import create_research_agent, stream_research_agent
 from alphadesk.config.settings import Settings
@@ -58,16 +60,49 @@ async def open_app_services(settings: Settings) -> AsyncGenerator[AppServices]:
     Yields:
         The services, ready for requests.
     """
+    async with (
+        # One checkpointer for the app: every thread's memory lives in it.
+        open_checkpointer(settings) as checkpointer,
+        open_research_agent(settings, checkpointer) as agent,
+    ):
+        yield AppServices(
+            # `partial` fills in the agent and its model's price, leaving the
+            # (message, thread_id) function that ChatService expects. ChatService never
+            # sees the agent itself.
+            chat=ChatService(
+                partial(stream_research_agent, agent, price=get_model_price("small", settings))
+            ),
+            check_postgres=(
+                partial(postgres_is_reachable, settings) if settings.postgres_url else None
+            ),
+        )
+
+
+@asynccontextmanager
+async def open_research_agent(
+    settings: Settings, checkpointer: BaseCheckpointSaver
+) -> AsyncGenerator[CompiledStateGraph]:
+    """Build the research agent on real data clients. The clients are closed on exit.
+
+    Shared by the API, `scripts/chat.py` and the evals, so all three run the same agent.
+    The checkpointer is passed in because each picks its own: the API and the chat script
+    use the configured one, and the evals always use memory.
+
+    Args:
+        settings: The app's settings.
+        checkpointer: Where the agent saves its threads.
+
+    Yields:
+        The agent, ready for `ask_research_agent` or `stream_research_agent`.
+    """
     retry = retry_policy_from_settings(settings)
     # An exit stack, because whether the Finnhub client is opened depends on settings.
     # Everything entered on it is closed, in reverse order, when the block ends.
     async with AsyncExitStack() as stack:
         edgar_http = await stack.enter_async_context(create_edgar_http_client(settings))
-        # One checkpointer for the app: every thread's memory lives in it.
-        checkpointer = await stack.enter_async_context(open_checkpointer(settings))
 
-        # Without a Finnhub key the API still starts: only price questions need it, and the
-        # quote tool tells the model prices are unavailable.
+        # Without a Finnhub key the agent still works: only price questions need it, and
+        # the quote tool tells the model prices are unavailable.
         quote_source: FinnhubClient | None = None
         if settings.finnhub_api_key:
             finnhub_http = await stack.enter_async_context(create_finnhub_http_client(settings))
@@ -82,7 +117,7 @@ async def open_app_services(settings: Settings) -> AsyncGenerator[AppServices]:
         edgar = EdgarClient(
             edgar_http, RateLimiter(settings.sec_edgar_max_requests_per_second), retry
         )
-        agent = create_research_agent(
+        yield create_research_agent(
             model=get_chat_model("small", settings),
             quote_service=QuoteService(quote_source),
             financial_facts_service=FinancialFactsService(edgar),
@@ -90,17 +125,6 @@ async def open_app_services(settings: Settings) -> AsyncGenerator[AppServices]:
             history_max_tokens=settings.history_max_tokens,
             max_model_calls=settings.agent_max_model_calls,
             checkpointer=checkpointer,
-        )
-        yield AppServices(
-            # `partial` fills in the agent and its model's price, leaving the
-            # (message, thread_id) function that ChatService expects. ChatService never
-            # sees the agent itself.
-            chat=ChatService(
-                partial(stream_research_agent, agent, price=get_model_price("small", settings))
-            ),
-            check_postgres=(
-                partial(postgres_is_reachable, settings) if settings.postgres_url else None
-            ),
         )
 
 

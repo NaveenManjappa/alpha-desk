@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI
 
 from alphadesk.config.settings import Settings
 from alphadesk.domain.usage import ModelPrice
-from alphadesk.integrations.llm import ModelTier, get_chat_model, get_model_price
+from alphadesk.integrations.llm import ModelTier, get_chat_model, get_model_name, get_model_price
 
 
 def _openai_settings() -> Settings:
@@ -95,3 +95,21 @@ def test_each_tier_has_its_own_price_from_settings() -> None:
     assert get_model_price("large", settings) == ModelPrice(
         input_usd_per_million=1.25, output_usd_per_million=10.0
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("settings", "tier", "expected"),
+    [
+        (_openai_settings(), "small", "small-model"),
+        (_openai_settings(), "large", "large-model"),
+        (_azure_settings(), "small", "small-deployment"),
+        (_azure_settings(), "large", "large-deployment"),
+    ],
+)
+def test_model_name_matches_the_model_the_factory_builds(
+    settings: Settings, tier: ModelTier, expected: str
+) -> None:
+    model = get_chat_model(tier, settings)
+    assert isinstance(model, ChatOpenAI)
+    assert get_model_name(tier, settings) == expected == model.model_name

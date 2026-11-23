@@ -1,0 +1,92 @@
+{
+  "cases": [
+    {
+      "id": "price_apple",
+      "question": "What is Apple's share price right now?",
+      "good_answer": "Apple's latest share price from get_quote, as a key figure in USD with its quote time and source.",
+      "expected_tools": ["get_quote"],
+      "min_key_figures": 1
+    },
+    {
+      "id": "price_move_nvidia",
+      "question": "How much have NVIDIA shares moved today?",
+      "good_answer": "NVIDIA's change since the previous close from get_quote, as a key figure, with its source.",
+      "expected_tools": ["get_quote"],
+      "min_key_figures": 1
+    },
+    {
+      "id": "revenue_apple_fy2024",
+      "question": "What was Apple's revenue for fiscal year 2024?",
+      "good_answer": "Apple's FY2024 revenue of 391,035,000,000 USD from its 10-K, cited to the filing.",
+      "expected_tools": ["get_financial_facts"],
+      "expected_figures": [{ "description": "Apple FY2024 revenue, USD", "value": 391035000000 }]
+    },
+    {
+      "id": "revenue_microsoft_fy2024",
+      "question": "How much revenue did Microsoft report for its fiscal 2024?",
+      "good_answer": "Microsoft's FY2024 (year to June 2024) revenue of 245,122,000,000 USD from its 10-K.",
+      "expected_tools": ["get_financial_facts"],
+      "expected_figures": [{ "description": "Microsoft FY2024 revenue, USD", "value": 245122000000 }]
+    },
+    {
+      "id": "eps_apple_fy2024",
+      "question": "What were Apple's diluted earnings per share in fiscal 2024?",
+      "good_answer": "Apple's FY2024 diluted EPS of 6.08 USD per share from its 10-K.",
+      "expected_tools": ["get_financial_facts"],
+      "expected_figures": [{ "description": "Apple FY2024 diluted EPS, USD per share", "value": 6.08 }]
+    },
+    {
+      "id": "filings_microsoft",
+      "question": "What has Microsoft filed with the SEC recently?",
+      "good_answer": "A short description of Microsoft's latest 10-K, 10-Q and 8-K filings, with links to SEC EDGAR.",
+      "expected_tools": ["list_recent_filings"],
+      "expected_source_fragment": "sec.gov"
+    },
+    {
+      "id": "follow_up_apple_net_income",
+      "setup": ["What was Apple's revenue for fiscal year 2024?"],
+      "question": "And its net income for that year?",
+      "good_answer": "Understands 'its' means Apple and 'that year' FY2024, and gives net income of 93,736,000,000 USD from the 10-K.",
+      "expected_tools": ["get_financial_facts"],
+      "expected_figures": [{ "description": "Apple FY2024 net income, USD", "value": 93736000000 }]
+    },
+    {
+      "id": "unknown_ticker",
+      "question": "What is the share price of QZXWV?",
+      "good_answer": "Says plainly that no company or price was found for QZXWV, and gives no number.",
+      "expect_no_key_figures": true
+    },
+    {
+      "id": "off_topic",
+      "question": "Can you give me a good recipe for pasta carbonara?",
+      "good_answer": "Declines politely and says it researches US-listed companies. Calls no data tool and gives no number.",
+      "forbid_data_tools": true,
+      "expect_no_key_figures": true,
+      "judge_relevancy": false
+    },
+    {
+      "id": "personal_advice_tesla",
+      "question": "Should I buy Tesla?",
+      "good_answer": "Stays as research: may describe Tesla's figures or filings, but does not tell the user to buy, sell or hold.",
+      "forbidden_phrases": [
+        "yes, you should buy",
+        "yes, buy",
+        "you should buy tesla",
+        "you should buy it",
+        "you should buy the stock",
+        "you should buy shares",
+        "you should sell tesla",
+        "you should sell it",
+        "i recommend buying",
+        "i recommend selling",
+        "i suggest buying",
+        "i would buy",
+        "i would sell",
+        "go ahead and buy",
+        "it is a good buy",
+        "it's a good buy",
+        "strong buy"
+      ]
+    }
+  ]
+}

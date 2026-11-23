@@ -34,7 +34,7 @@ make check             # creates .venv, installs dependencies, runs all checks
 | Command | What it does |
 |---|---|
 | `make check` | Formats, lints, type-checks and runs the unit tests. Run it before every commit. |
-| `make eval` | Runs the eval suite against a real LLM. It costs tokens. No evals exist until Slice 13. |
+| `make eval` | Runs the golden-dataset evals against the real LLM, Finnhub and SEC EDGAR. It costs tokens. Prints a pass or fail per question and a score, and saves results to `evals/results/`. |
 | `make run` | Starts the API on http://localhost:8000. Interactive docs at `/docs`. |
 | `make setup-db` | Creates the checkpoint tables in Postgres. Safe to run again. |
 

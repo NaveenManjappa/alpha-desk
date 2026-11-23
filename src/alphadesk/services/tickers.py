@@ -19,9 +19,17 @@ def normalise_ticker(ticker: str) -> str | None:
 
 
 def invalid_ticker_error(ticker: str) -> ToolError:
-    """The error a tool returns when `normalise_ticker` rejects its input."""
+    """The error a tool returns when `normalise_ticker` rejects its input.
+
+    The message names no example ticker. An earlier one did ("such as 'AAPL'"), and a
+    model asked an off-topic question took it as a hint, then fetched Apple's quote over
+    and over until the run limit stopped it. The message says what to do instead.
+    """
     return ToolError(
         error_type="invalid_input",
-        message=f"'{ticker}' is not a valid ticker. Use a symbol such as 'AAPL'.",
+        message=(
+            f"'{ticker}' is not a valid US ticker. Do not guess one. If the question names "
+            "no company, call no more tools and say so in your answer."
+        ),
         as_of=datetime.now(UTC),
     )
